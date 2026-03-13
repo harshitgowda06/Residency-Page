@@ -21,6 +21,9 @@
 #include <unistd.h>
 #include <signal.h>
 #include <libpq-fe.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/bio.h>
 
 // ─── C++ headers ──────────────────────────────────────────────────
 #include <algorithm>
@@ -850,7 +853,117 @@ public:
 // ═══════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════
-//  §12  Embedded frontend  (full SPA with auth, all pages)
+//  §11b  Gmail SMTP mailer  (TLS, port 587 STARTTLS)
+// ═══════════════════════════════════════════════════════════════════
+struct Mailer {
+    std::string gmailUser;   // e.g. you@gmail.com
+    std::string gmailPass;   // 16-char App Password
+    bool        enabled=false;
+
+    void init(){
+        const char* u=std::getenv("GMAIL_USER");
+        const char* p=std::getenv("GMAIL_PASS");
+        if(u&&p&&strlen(u)>0&&strlen(p)>0){
+            gmailUser=u; gmailPass=p; enabled=true;
+            std::cout<<"  Email: Gmail SMTP enabled ("<<gmailUser<<")\n";
+        } else {
+            std::cout<<"  Email: disabled (set GMAIL_USER + GMAIL_PASS to enable)\n";
+        }
+    }
+
+    // Base64 encode
+    static std::string b64(const std::string& s){
+        static const char* t="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string r; int v=0,bits=0;
+        for(unsigned char c:s){ v=(v<<8)|c; bits+=8;
+            while(bits>=6){ r+=t[(v>>(bits-6))&63]; bits-=6; } }
+        if(bits>0){ r+=t[(v<<(6-bits))&63]; }
+        while(r.size()%4) r+='=';
+        return r;
+    }
+
+    // Send one line + CRLF, read response
+    static bool smtp_cmd(BIO* bio, const std::string& cmd, const std::string& expect){
+        std::string line=cmd+"\r\n";
+        BIO_write(bio,line.c_str(),(int)line.size());
+        char buf[1024]={};
+        BIO_read(bio,buf,sizeof(buf)-1);
+        return std::string(buf).find(expect)!=std::string::npos;
+    }
+    static std::string smtp_read(BIO* bio){
+        char buf[4096]={}; BIO_read(bio,buf,sizeof(buf)-1); return buf;
+    }
+
+    // Send email via Gmail STARTTLS on port 587
+    bool send(const std::string& toAddr, const std::string& toName,
+              const std::string& subject, const std::string& body){
+        if(!enabled||toAddr.empty()) return false;
+        try{
+            SSL_CTX* ctx=SSL_CTX_new(TLS_client_method());
+            if(!ctx) return false;
+            SSL_CTX_set_verify(ctx,SSL_VERIFY_NONE,nullptr);
+
+            BIO* bio=BIO_new_connect("smtp.gmail.com:587");
+            if(!bio){ SSL_CTX_free(ctx); return false; }
+            BIO_set_nbio(bio,0);
+            if(BIO_do_connect(bio)<=0){ BIO_free_all(bio); SSL_CTX_free(ctx); return false; }
+
+            smtp_read(bio); // greeting
+            smtp_cmd(bio,"EHLO residence.portal","250");
+            smtp_cmd(bio,"STARTTLS","220");
+
+            // Upgrade to TLS
+            BIO* ssl_bio=BIO_new_ssl(ctx,1);
+            bio=BIO_push(ssl_bio,bio);
+            if(BIO_do_handshake(bio)<=0){ BIO_free_all(bio); SSL_CTX_free(ctx); return false; }
+
+            smtp_cmd(bio,"EHLO residence.portal","250");
+            smtp_cmd(bio,"AUTH LOGIN","334");
+            smtp_cmd(bio,b64(gmailUser),"334");
+            smtp_cmd(bio,b64(gmailPass),"235");
+
+            smtp_cmd(bio,"MAIL FROM:<"+gmailUser+">","250");
+            smtp_cmd(bio,"RCPT TO:<"+toAddr+">","25"); // accepts 250 or 251
+            smtp_cmd(bio,"DATA","354");
+
+            // Build message
+            std::string msg=
+                "From: Residence Portal <"+gmailUser+">\r\n"
+                "To: "+toName+" <"+toAddr+">\r\n"
+                "Subject: "+subject+"\r\n"
+                "MIME-Version: 1.0\r\n"
+                "Content-Type: text/plain; charset=UTF-8\r\n"
+                "\r\n"+body+"\r\n.\r\n";
+            BIO_write(bio,msg.c_str(),(int)msg.size());
+            smtp_read(bio);
+            smtp_cmd(bio,"QUIT","221");
+            BIO_free_all(bio); SSL_CTX_free(ctx);
+            std::cout<<"  Email sent to "<<toAddr<<"\n";
+            return true;
+        } catch(...){
+            std::cerr<<"  Email send failed\n"; return false;
+        }
+    }
+
+    // Send async (fire-and-forget thread)
+    void sendAsync(const std::string& toAddr, const std::string& toName,
+                   const std::string& subject, const std::string& body){
+        if(!enabled||toAddr.empty()) return;
+        std::thread([this,toAddr,toName,subject,body]{
+            send(toAddr,toName,subject,body);
+        }).detach();
+    }
+
+    // Broadcast to all residents with email
+    void broadcast(const std::vector<User>& users,
+                   const std::string& subject, const std::string& body){
+        if(!enabled) return;
+        for(auto&u:users){
+            if(!u.email.empty()&&u.role!="admin")
+                sendAsync(u.email,u.name,subject,body);
+        }
+    }
+};
 // ═══════════════════════════════════════════════════════════════════
 static const char FRONTEND[] = R"HTMLEOF(<!DOCTYPE html>
 <html lang="en">
@@ -1910,9 +2023,11 @@ int main(int argc, char** argv){
     DB       db;
     Sessions sessions;
     SSEBroker sse;
+    Mailer   mailer;
 
     std::cout<<"  Loading database…\n";
     db.load(dbUrl);
+    mailer.init();
 
     Server srv;
     // ── Routes (inlined) ──────────────────────────────────────────
@@ -1987,6 +2102,14 @@ int main(int argc, char** argv){
             auto tok=sessions.create(u.id);
             Json r=Json::object(); r["token"]=Json(tok); r["user"]=toJ(u);
             res.json(r.dump());
+            // welcome email
+            if(!email.empty())
+                mailer.sendAsync(email,name,"Welcome to the Residence Portal",
+                    "Hi "+name+",\n\n"
+                    "Welcome to the Residence Portal! Your account has been created.\n\n"
+                    "Room: "+room+"\nUsername: "+uname+"\n\n"
+                    "You can access the portal at any time to book laundry, equipment, and view events.\n\n"
+                    "Best regards,\nResidence Management");
         }
     });
 
@@ -2051,6 +2174,11 @@ int main(int argc, char** argv){
         Notice n; n.id=makeUID(); n.text=body["text"].asStr(); n.urgent=body["urgent"].asBool(); n.active=true;
         db.notices.push_back(n); db.save(); bcNotices();
         res.json(toJ(n).dump());
+        // broadcast to all residents with email
+        std::string subj=n.urgent?"⚠ Urgent Notice — Residence Portal":"📢 New Notice — Residence Portal";
+        std::string emailBody="A new notice has been posted:\n\n"+(n.urgent?"[URGENT] ":"")+n.text+
+            "\n\nView the portal for more details.\n\nResidence Management";
+        mailer.broadcast(db.users,subj,emailBody);
     });
     srv.route("DELETE","/api/notices/:id",[&](const Req& req, Res& res){
         std::lock_guard<std::mutex> lk(db.mtx);
@@ -2169,6 +2297,12 @@ int main(int argc, char** argv){
         bk.userId=me->id; bk.machineId=mid; bk.date=date; bk.slot=slot; bk.createdAt=nowISO();
         db.laundry.push_back(bk); db.save(); bcLaundry();
         res.json(toJ(bk).dump());
+        if(!me->email.empty())
+            mailer.sendAsync(me->email,me->name,"🧺 Laundry Booking Confirmed",
+                "Hi "+me->name+",\n\nYour laundry booking is confirmed:\n\n"
+                "Machine: "+mid+"\nDate: "+date+"\nTime: "+slot+"\n\n"
+                "Remember the 10-minute rule — move your laundry promptly after the cycle ends.\n\n"
+                "Residence Management");
     });
     srv.route("DELETE","/api/laundry/:id",[&](const Req& req, Res& res){
         std::lock_guard<std::mutex> lk(db.mtx);
@@ -2207,6 +2341,12 @@ int main(int argc, char** argv){
         bk.duration=60; bk.createdAt=nowISO();
         db.equip.push_back(bk); db.save(); bcEquip();
         res.json(toJ(bk).dump());
+        if(!me->email.empty())
+            mailer.sendAsync(me->email,me->name,"🔧 Equipment Booking Confirmed",
+                "Hi "+me->name+",\n\nYour equipment booking is confirmed:\n\n"
+                "Item: "+item+"\nDate: "+date+"\nTime: "+startTime+" – "+endTime+"\n\n"
+                "Please return the item promptly after use.\n\n"
+                "Residence Management");
     });
     srv.route("DELETE","/api/equip/:id",[&](const Req& req, Res& res){
         std::lock_guard<std::mutex> lk(db.mtx);
