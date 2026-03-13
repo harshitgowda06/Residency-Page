@@ -49,7 +49,7 @@
 // ═══════════════════════════════════════════════════════════════════
 //  §1  SHA-256  (pure C++ — no OpenSSL needed)
 // ═══════════════════════════════════════════════════════════════════
-namespace SHA256 {
+namespace SHA256Impl {
     static const uint32_t K[64]={
         0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
         0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
@@ -97,7 +97,7 @@ namespace SHA256 {
             o<<std::hex<<std::setw(8)<<std::setfill('0')<<v;
         return o.str();
     }
-} // namespace SHA256
+} // namespace SHA256Impl
 
 // ═══════════════════════════════════════════════════════════════════
 //  §2  Utilities
@@ -123,7 +123,7 @@ static std::string makeUID(){
 static std::string hashPw(const std::string& pw, const std::string& salt){
     // iterated SHA-256 key stretching (10 000 rounds)
     std::string h=salt+pw;
-    for(int i=0;i<10000;i++) h=SHA256::hash(h+std::to_string(i));
+    for(int i=0;i<10000;i++) h=SHA256Impl::hash(h+std::to_string(i));
     return h;
 }
 
@@ -2176,7 +2176,8 @@ int main(int argc, char** argv){
         res.json(toJ(n).dump());
         // broadcast to all residents with email
         std::string subj=n.urgent?"⚠ Urgent Notice — Residence Portal":"📢 New Notice — Residence Portal";
-        std::string emailBody="A new notice has been posted:\n\n"+(n.urgent?"[URGENT] ":"")+n.text+
+        std::string urgPfx=n.urgent?"[URGENT] ":"";
+        std::string emailBody="A new notice has been posted:\n\n"+urgPfx+n.text+
             "\n\nView the portal for more details.\n\nResidence Management";
         mailer.broadcast(db.users,subj,emailBody);
     });
