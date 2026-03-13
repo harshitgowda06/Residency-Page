@@ -998,7 +998,7 @@ tbody td:first-child{color:var(--slate);font-weight:500}
       <img src="https://i.imgur.com/esh-Lq2dqye.png" alt="Logo" style="width:52px;height:52px;object-fit:contain;border-radius:10px;flex-shrink:0" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
       <div class="auth-logo-icon" style="display:none">🏠</div>
       <div>
-        <div class="auth-logo-name">Residence Portal</div>
+        <div class="auth-logo-name">Edge Student Hub Portal</div>
         <div class="auth-logo-sub">Shared Living Management System</div>
       </div>
     </div>
