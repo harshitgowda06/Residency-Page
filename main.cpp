@@ -882,16 +882,37 @@ struct Mailer {
         return r;
     }
 
-    // Send one line + CRLF, read response
+    // Read until we have a complete SMTP response line
+    static std::string smtp_read(BIO* bio){
+        std::string result;
+        char c=0;
+        // Read char by char until we get a line not starting with digit-dash (multi-line)
+        for(int i=0;i<8192;i++){
+            int n=BIO_read(bio,&c,1);
+            if(n<=0) break;
+            result+=c;
+            // SMTP multi-line ends when we get "XYZ " (digit digit digit space)
+            if(result.size()>=4 && result[result.size()-1]=='\n'){
+                // Find last line
+                size_t pos=result.rfind('\n',result.size()-2);
+                std::string last=(pos==std::string::npos)?result:result.substr(pos+1);
+                if(last.size()>=4 && isdigit(last[0]) && isdigit(last[1]) && isdigit(last[2]) && last[3]==' ')
+                    break;
+            }
+        }
+        return result;
+    }
+
+    // Send one line + CRLF, read response, log it
     static bool smtp_cmd(BIO* bio, const std::string& cmd, const std::string& expect){
         std::string line=cmd+"\r\n";
         BIO_write(bio,line.c_str(),(int)line.size());
-        char buf[1024]={};
-        BIO_read(bio,buf,sizeof(buf)-1);
-        return std::string(buf).find(expect)!=std::string::npos;
-    }
-    static std::string smtp_read(BIO* bio){
-        char buf[4096]={}; BIO_read(bio,buf,sizeof(buf)-1); return buf;
+        std::string resp=smtp_read(bio);
+        bool ok=resp.find(expect)!=std::string::npos;
+        std::string disp=cmd.size()>60?cmd.substr(0,60)+"…":cmd;
+        std::cout<<"  SMTP >> "<<disp<<"\n  SMTP << "<<resp;
+        if(!ok) std::cerr<<"  SMTP expected '"<<expect<<"' but got: "<<resp;
+        return ok;
     }
 
     // Send email via Gmail STARTTLS on port 587
@@ -900,33 +921,53 @@ struct Mailer {
         if(!enabled||toAddr.empty()) return false;
         try{
             SSL_CTX* ctx=SSL_CTX_new(TLS_client_method());
-            if(!ctx) return false;
+            if(!ctx){ std::cerr<<"  SMTP: SSL_CTX_new failed\n"; return false; }
             SSL_CTX_set_verify(ctx,SSL_VERIFY_NONE,nullptr);
 
             BIO* bio=BIO_new_connect("smtp.gmail.com:587");
-            if(!bio){ SSL_CTX_free(ctx); return false; }
+            if(!bio){ SSL_CTX_free(ctx); std::cerr<<"  SMTP: BIO_new_connect failed\n"; return false; }
             BIO_set_nbio(bio,0);
-            if(BIO_do_connect(bio)<=0){ BIO_free_all(bio); SSL_CTX_free(ctx); return false; }
+            if(BIO_do_connect(bio)<=0){
+                std::cerr<<"  SMTP: connect to smtp.gmail.com:587 failed\n";
+                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
+            }
+            std::cout<<"  SMTP: connected to smtp.gmail.com:587\n";
 
-            smtp_read(bio); // greeting
+            std::string greeting=smtp_read(bio);
+            std::cout<<"  SMTP << "<<greeting;
+            if(greeting.find("220")==std::string::npos){
+                std::cerr<<"  SMTP: bad greeting\n";
+                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
+            }
+
             smtp_cmd(bio,"EHLO residence.portal","250");
-            smtp_cmd(bio,"STARTTLS","220");
+            if(!smtp_cmd(bio,"STARTTLS","220")){
+                std::cerr<<"  SMTP: STARTTLS rejected\n";
+                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
+            }
 
             // Upgrade to TLS
             BIO* ssl_bio=BIO_new_ssl(ctx,1);
             bio=BIO_push(ssl_bio,bio);
-            if(BIO_do_handshake(bio)<=0){ BIO_free_all(bio); SSL_CTX_free(ctx); return false; }
+            if(BIO_do_handshake(bio)<=0){
+                std::cerr<<"  SMTP: TLS handshake failed\n";
+                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
+            }
+            std::cout<<"  SMTP: TLS handshake OK\n";
 
             smtp_cmd(bio,"EHLO residence.portal","250");
             smtp_cmd(bio,"AUTH LOGIN","334");
             smtp_cmd(bio,b64(gmailUser),"334");
-            smtp_cmd(bio,b64(gmailPass),"235");
+            if(!smtp_cmd(bio,b64(gmailPass),"235")){
+                std::cerr<<"  SMTP: AUTH failed — check GMAIL_USER and GMAIL_PASS\n";
+                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
+            }
+            std::cout<<"  SMTP: authenticated OK\n";
 
             smtp_cmd(bio,"MAIL FROM:<"+gmailUser+">","250");
-            smtp_cmd(bio,"RCPT TO:<"+toAddr+">","25"); // accepts 250 or 251
+            smtp_cmd(bio,"RCPT TO:<"+toAddr+">","25");
             smtp_cmd(bio,"DATA","354");
 
-            // Build message
             std::string msg=
                 "From: Residence Portal <"+gmailUser+">\r\n"
                 "To: "+toName+" <"+toAddr+">\r\n"
@@ -935,13 +976,16 @@ struct Mailer {
                 "Content-Type: text/plain; charset=UTF-8\r\n"
                 "\r\n"+body+"\r\n.\r\n";
             BIO_write(bio,msg.c_str(),(int)msg.size());
-            smtp_read(bio);
+            std::string dataResp=smtp_read(bio);
+            std::cout<<"  SMTP << "<<dataResp;
             smtp_cmd(bio,"QUIT","221");
             BIO_free_all(bio); SSL_CTX_free(ctx);
-            std::cout<<"  Email sent to "<<toAddr<<"\n";
+            std::cout<<"  Email sent OK to "<<toAddr<<"\n";
             return true;
+        } catch(const std::exception& e){
+            std::cerr<<"  Email send exception: "<<e.what()<<"\n"; return false;
         } catch(...){
-            std::cerr<<"  Email send failed\n"; return false;
+            std::cerr<<"  Email send failed (unknown error)\n"; return false;
         }
     }
 
@@ -1401,34 +1445,6 @@ tbody td:first-child{color:var(--slate);font-weight:500}
           </div>
         </div>
 
-        <!-- WHATSAPP GROUP NOTIFIER -->
-        <div>
-          <div class="st">📱 WhatsApp Group Notifier</div>
-          <div class="adm" style="padding:22px">
-            <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">
-              Send a message to the residence WhatsApp group via your phone.
-              Your phone will open WhatsApp with the message pre-filled — just hit <strong>Send</strong>.
-            </div>
-            <div class="fg"><label>Group Phone / Link</label>
-              <input id="wa-group" placeholder="e.g. +447911123456 or group invite link" style="font-size:13px">
-              <div style="font-size:11px;color:var(--muted);margin-top:4px">Enter the group admin's number or a wa.me group link</div>
-            </div>
-            <div class="fg"><label>Message</label>
-              <textarea id="wa-msg" rows="4" placeholder="Type your message to the group…"></textarea>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-              <button class="btn btn-gh btn-sm" onclick="waPrefill('equipment')">📋 Equipment update</button>
-              <button class="btn btn-gh btn-sm" onclick="waPrefill('booking')">🧺 Laundry reminder</button>
-              <button class="btn btn-gh btn-sm" onclick="waPrefill('notice')">📢 General notice</button>
-            </div>
-            <button class="btn btn-g btn-full" onclick="sendWhatsApp()">📲 Open in WhatsApp</button>
-            <div style="margin-top:10px;font-size:11px;color:var(--muted);text-align:center">
-              Opens WhatsApp on your device — works on mobile and desktop (WhatsApp Web)
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- FULL BOOKINGS TABLE -->
       <div class="st" style="margin-top:28px">All Equipment Bookings</div>
       <div class="tw">
@@ -1878,7 +1894,6 @@ function renderEquipBoard(){
           <div style="font-weight:600;color:var(--slate)">👤 ${esc(b.name)}</div>
           <div style="color:var(--muted)">🚪 Room ${esc(b.room)}</div>
           ${b.startTime&&b.startTime!=='—'?`<div style="color:var(--muted)">🕐 ${esc(b.startTime)}${b.endTime&&b.endTime!=='—'?' → '+esc(b.endTime):''}</div>`:''}
-          <button class="btn btn-gh btn-sm" style="margin-top:6px;font-size:11px;width:100%;justify-content:center" onclick="waPrefillItem('${esc(b.item)}','${esc(b.name)}','${esc(b.room)}','${esc(b.startTime)}','${esc(b.endTime)}')">📲 Notify group</button>
         </div>`).join('')
       :'<div style="font-size:12px;color:var(--muted);padding-top:6px;border-top:1px solid var(--border)">No bookings today</div>'}
     </div>`;
@@ -1914,45 +1929,6 @@ function renderAdmEq(){
 }
 async function cancelEq(id){ if(!confirm('Cancel?'))return; await DEL('/api/equip/'+id); toast('Cancelled'); loadEq(); }
 
-// ── WHATSAPP ─────────────────────────────────────────────────────
-function getWaTarget(){
-  let target=(document.getElementById('wa-group')||{value:''}).value.trim();
-  if(!target){ toast('Please enter a WhatsApp group number or link','er'); return null; }
-  // If it looks like a phone number, use wa.me
-  target=target.replace(/[\s\-\(\)]/g,'');
-  if(target.startsWith('+')) return 'https://wa.me/'+target.replace('+','');
-  if(/^\d+$/.test(target)) return 'https://wa.me/'+target;
-  // If it's already a link
-  if(target.startsWith('http')) return target;
-  return 'https://wa.me/'+target;
-}
-
-function sendWhatsApp(){
-  const target=getWaTarget(); if(!target) return;
-  const msg=(document.getElementById('wa-msg')||{value:''}).value.trim();
-  if(!msg){ toast('Please type a message','er'); return; }
-  const url=target+'?text='+encodeURIComponent(msg);
-  window.open(url,'_blank');
-  toast('Opening WhatsApp…','ok');
-}
-
-function waPrefill(type){
-  const now=new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
-  const templates={
-    equipment: `Hi everyone 👋\n\nJust a heads-up about equipment availability in the residence.\n\nPlease check the portal for current bookings: http://localhost:3000\n\nThanks 🙏`,
-    booking: `🧺 Laundry Reminder\n\nPlease remember the 10-minute rule — if your laundry has been sitting for more than 10 minutes after the cycle ends, it may be moved.\n\nCheck the portal for bookings: http://localhost:3000`,
-    notice: `📢 Residence Notice [${now}]\n\nDear residents,\n\n[Edit this message before sending]\n\nThanks,\nManagement`
-  };
-  const el=document.getElementById('wa-msg');
-  if(el) el.value=templates[type]||'';
-}
-
-function waPrefillItem(item,name,room,start,end){
-  const el=document.getElementById('wa-msg');
-  if(el) el.value=`📢 Equipment Update\n\n${item} is currently in use:\n👤 ${name} (Room ${room})${start&&start!=='—'?' | 🕐 '+start+(end&&end!=='—'?' → '+end:''):''}\n\nPlease check the portal for availability: http://localhost:3000`;
-  showPage('equip');
-  setTimeout(()=>{ const w=document.getElementById('wa-group'); if(w&&!w.value) w.focus(); },200);
-}
 
 // ── ADMIN: USERS ─────────────────────────────────────────────────
 function renderAdmUsers(users){
@@ -2094,7 +2070,6 @@ int main(int argc, char** argv){
         {
             std::lock_guard<std::mutex> lk(db.mtx);
             if(db.findByUsername(uname)){ res.err(409,"That username is already taken."); return; }
-            if(db.findByRoom(room))     { res.err(409,"A resident is already registered for that room number."); return; }
             User u; u.id=makeUID(); u.name=name; u.room=room; u.username=uname;
             u.email=email; u.phone=phone;
             u.salt=randomHex(16); u.hash=hashPw(pw,u.salt); u.role="resident"; u.createdAt=nowISO();
