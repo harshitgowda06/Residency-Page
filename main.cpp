@@ -3,14 +3,15 @@
  * ║   Residence Management System  —  C++ Single-File Backend       ║
  * ╠══════════════════════════════════════════════════════════════════╣
  * ║  Build:  g++ -std=c++17 -O2 -o residence main.cpp -lpthread     ║
- * ║  Run:    ./residence                                             ║
+ * ║          -lpq                                                    ║
+ * ║  Run:    DATABASE_URL=<postgres-url> ./residence 3000            ║
  * ║  Open:   http://localhost:3000                                   ║
  * ║                                                                  ║
  * ║  Default admin  →  username: admin   password: admin123         ║
  * ║  Residents self-register with name + room number + password     ║
  * ╚══════════════════════════════════════════════════════════════════╝
  *
- *  Zero external dependencies — C++17 stdlib + POSIX sockets only.
+ *  Dependencies: libpq (PostgreSQL C client), pthreads
  */
 
 // ─── system headers ───────────────────────────────────────────────
@@ -19,6 +20,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <signal.h>
+#include <libpq-fe.h>
 
 // ─── C++ headers ──────────────────────────────────────────────────
 #include <algorithm>
@@ -293,7 +295,7 @@ static Json parseJson(const std::string& s){ JsonParser p(s); return p.parse(); 
 // ═══════════════════════════════════════════════════════════════════
 //  §4  Data models
 // ═══════════════════════════════════════════════════════════════════
-struct User      { std::string id,name,room,username,hash,salt,role,createdAt; };
+struct User      { std::string id,name,room,username,hash,salt,role,email,phone,createdAt; };
 struct Notice    { std::string id,text; bool active=true,urgent=false; };
 struct NewsItem  { std::string id,title,date,category,content; };
 struct Event     {
@@ -310,7 +312,9 @@ struct EquipBk   { std::string id,name,room,userId,item,date,startTime,endTime,c
 static Json toJ(const User& u){
     Json j=Json::object();
     j["id"]=Json(u.id); j["name"]=Json(u.name); j["room"]=Json(u.room);
-    j["username"]=Json(u.username); j["role"]=Json(u.role); j["createdAt"]=Json(u.createdAt);
+    j["username"]=Json(u.username); j["role"]=Json(u.role);
+    j["email"]=Json(u.email); j["phone"]=Json(u.phone);
+    j["createdAt"]=Json(u.createdAt);
     return j;
 }
 static Json toJ(const Notice& n){
@@ -357,8 +361,25 @@ static Json toJArr(const std::vector<T>& v){
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  §6  Database
+
 // ═══════════════════════════════════════════════════════════════════
+//  §6  Database  (PostgreSQL-backed, in-memory cache)
+// ═══════════════════════════════════════════════════════════════════
+
+static std::string pgEsc(PGconn* c, const std::string& s){
+    char* e=PQescapeLiteral(c,s.c_str(),s.size());
+    if(!e) return "''";
+    std::string r(e); PQfreemem(e); return r;
+}
+static std::string pgStr(PGresult* r,int row,int col){
+    if(PQgetisnull(r,row,col)) return "";
+    return PQgetvalue(r,row,col);
+}
+static bool pgBool(PGresult* r,int row,int col){
+    auto v=pgStr(r,row,col);
+    return v=="t"||v=="true"||v=="1";
+}
+
 class DB {
 public:
     std::vector<User>      users;
@@ -368,7 +389,7 @@ public:
     std::vector<LaundryBk> laundry;
     std::vector<EquipBk>   equip;
     std::mutex             mtx;
-    std::string            path_;
+    PGconn*                pg_=nullptr;
 
     // ── find helpers ─────────────────────────────────────────────
     User*      findUser(const std::string& id)   { for(auto&u:users)   if(u.id==id)       return &u; return nullptr; }
@@ -378,124 +399,170 @@ public:
     LaundryBk* findLaundry(const std::string& id){ for(auto&b:laundry) if(b.id==id)       return &b; return nullptr; }
     EquipBk*   findEquip(const std::string& id)  { for(auto&b:equip)   if(b.id==id)       return &b; return nullptr; }
 
-    // ── persistence ──────────────────────────────────────────────
-    void save(){
-        Json root=Json::object();
-        // users
-        Json ju=Json::array();
-        for(auto&u:users){
-            Json j=Json::object();
-            j["id"]=Json(u.id); j["name"]=Json(u.name); j["room"]=Json(u.room);
-            j["username"]=Json(u.username); j["hash"]=Json(u.hash); j["salt"]=Json(u.salt);
-            j["role"]=Json(u.role); j["createdAt"]=Json(u.createdAt);
-            ju.push(j);
-        }
-        root["users"]=ju;
-        // notices
-        Json jno=Json::array();
-        for(auto&n:notices){
-            Json j=Json::object();
-            j["id"]=Json(n.id); j["text"]=Json(n.text); j["active"]=Json(n.active); j["urgent"]=Json(n.urgent);
-            jno.push(j);
-        }
-        root["notices"]=jno;
-        // news
-        Json jnw=Json::array();
-        for(auto&it:news){
-            Json j=Json::object();
-            j["id"]=Json(it.id); j["title"]=Json(it.title); j["date"]=Json(it.date);
-            j["category"]=Json(it.category); j["content"]=Json(it.content);
-            jnw.push(j);
-        }
-        root["news"]=jnw;
-        // events
-        Json jev=Json::array();
-        for(auto&e:events){
-            Json j=Json::object();
-            j["id"]=Json(e.id); j["name"]=Json(e.name); j["date"]=Json(e.date);
-            j["time"]=Json(e.time_); j["description"]=Json(e.description);
-            j["location"]=Json(e.location); j["maxParticipants"]=Json((long long)e.maxParticipants);
-            j["createdAt"]=Json(e.createdAt);
-            Json jp=Json::array(); for(auto&p:e.participants) jp.push(Json(p));
-            j["participants"]=jp; jev.push(j);
-        }
-        root["events"]=jev;
-        // laundry
-        Json jl=Json::array();
-        for(auto&b:laundry){
-            Json j=Json::object();
-            j["id"]=Json(b.id); j["name"]=Json(b.name); j["room"]=Json(b.room);
-            j["userId"]=Json(b.userId); j["machineId"]=Json(b.machineId);
-            j["date"]=Json(b.date); j["slot"]=Json(b.slot); j["createdAt"]=Json(b.createdAt);
-            jl.push(j);
-        }
-        root["laundry"]=jl;
-        // equip
-        Json je=Json::array();
-        for(auto&b:equip){
-            Json j=Json::object();
-            j["id"]=Json(b.id); j["name"]=Json(b.name); j["room"]=Json(b.room);
-            j["userId"]=Json(b.userId); j["item"]=Json(b.item); j["date"]=Json(b.date);
-            j["startTime"]=Json(b.startTime); j["endTime"]=Json(b.endTime);
-            j["duration"]=Json((long long)b.duration); j["createdAt"]=Json(b.createdAt);
-            je.push(j);
-        }
-        root["equip"]=je;
-        std::ofstream f(path_); f<<root.dump(2);
+    // ── PG exec helpers ──────────────────────────────────────────
+    bool exec(const std::string& sql){
+        PGresult* r=PQexec(pg_,sql.c_str());
+        bool ok=(PQresultStatus(r)==PGRES_COMMAND_OK||PQresultStatus(r)==PGRES_TUPLES_OK);
+        if(!ok) std::cerr<<"PG error: "<<PQerrorMessage(pg_)<<"\nSQL: "<<sql.substr(0,300)<<"\n";
+        PQclear(r); return ok;
+    }
+    PGresult* query(const std::string& sql){
+        PGresult* r=PQexec(pg_,sql.c_str());
+        if(PQresultStatus(r)!=PGRES_TUPLES_OK)
+            std::cerr<<"PG query error: "<<PQerrorMessage(pg_)<<"\n";
+        return r;
     }
 
-    void load(const std::string& filepath){
-        path_=filepath;
-        std::ifstream f(filepath);
-        if(!f.good()){ seed(); save(); return; }
-        std::string content((std::istreambuf_iterator<char>(f)),{});
-        if(content.empty()){ seed(); save(); return; }
-        try{
-            Json r=parseJson(content);
-            for(auto&j:r["users"].arr){
-                User u; u.id=j["id"].asStr(); u.name=j["name"].asStr(); u.room=j["room"].asStr();
-                u.username=j["username"].asStr(); u.hash=j["hash"].asStr(); u.salt=j["salt"].asStr();
-                u.role=j["role"].asStr(); u.createdAt=j["createdAt"].asStr();
-                users.push_back(u);
-            }
-            for(auto&j:r["notices"].arr){
-                Notice n; n.id=j["id"].asStr(); n.text=j["text"].asStr();
-                n.active=j["active"].asBool(); n.urgent=j["urgent"].asBool();
-                notices.push_back(n);
-            }
-            for(auto&j:r["news"].arr){
-                NewsItem it; it.id=j["id"].asStr(); it.title=j["title"].asStr();
-                it.date=j["date"].asStr(); it.category=j["category"].asStr(); it.content=j["content"].asStr();
-                news.push_back(it);
-            }
-            for(auto&j:r["events"].arr){
-                Event e; e.id=j["id"].asStr(); e.name=j["name"].asStr(); e.date=j["date"].asStr();
-                e.time_=j["time"].asStr(); e.description=j["description"].asStr();
-                e.location=j["location"].asStr(); e.maxParticipants=(int)j["maxParticipants"].asInt();
-                e.createdAt=j["createdAt"].asStr();
-                for(auto&p:j["participants"].arr) e.participants.push_back(p.asStr());
-                events.push_back(e);
-            }
-            for(auto&j:r["laundry"].arr){
-                LaundryBk b; b.id=j["id"].asStr(); b.name=j["name"].asStr(); b.room=j["room"].asStr();
-                b.userId=j["userId"].asStr(); b.machineId=j["machineId"].asStr();
-                b.date=j["date"].asStr(); b.slot=j["slot"].asStr(); b.createdAt=j["createdAt"].asStr();
-                laundry.push_back(b);
-            }
-            for(auto&j:r["equip"].arr){
-                EquipBk b; b.id=j["id"].asStr(); b.name=j["name"].asStr(); b.room=j["room"].asStr();
-                b.userId=j["userId"].asStr(); b.item=j["item"].asStr();
-                b.date=j["date"].asStr(); b.startTime=j["startTime"].asStr(); b.endTime=j["endTime"].asStr();
-                b.duration=(int)j["duration"].asInt(); b.createdAt=j["createdAt"].asStr();
-                equip.push_back(b);
-            }
-            ensureAdmin();
-            std::cout<<"  Loaded "<<users.size()<<" users, "<<news.size()<<" news, "<<events.size()<<" events\n";
-        } catch(...){
-            std::cerr<<"  DB parse error — reseeding\n";
-            users.clear(); notices.clear(); news.clear(); events.clear(); laundry.clear(); equip.clear();
-            seed(); save();
+    // ── Schema creation ──────────────────────────────────────────
+    void createSchema(){
+        exec(R"(CREATE TABLE IF NOT EXISTS users(
+            id TEXT PRIMARY KEY, name TEXT, room TEXT, username TEXT UNIQUE,
+            hash TEXT, salt TEXT, role TEXT, email TEXT, phone TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS notices(
+            id TEXT PRIMARY KEY, text TEXT, active BOOLEAN, urgent BOOLEAN))");
+        exec(R"(CREATE TABLE IF NOT EXISTS news(
+            id TEXT PRIMARY KEY, title TEXT, date TEXT, category TEXT, content TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS events(
+            id TEXT PRIMARY KEY, name TEXT, date TEXT, time_ TEXT,
+            description TEXT, location TEXT, max_participants INT,
+            participants TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS laundry(
+            id TEXT PRIMARY KEY, name TEXT, room TEXT, user_id TEXT,
+            machine_id TEXT, date TEXT, slot TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS equip(
+            id TEXT PRIMARY KEY, name TEXT, room TEXT, user_id TEXT,
+            item TEXT, date TEXT, start_time TEXT, end_time TEXT,
+            duration INT, created_at TEXT))");
+    }
+
+    // ── Save: write entire in-memory state to PG ─────────────────
+    void save(){
+        // users
+        exec("DELETE FROM users");
+        for(auto&u:users){
+            exec("INSERT INTO users VALUES("+pgEsc(pg_,u.id)+","+pgEsc(pg_,u.name)+","+
+                 pgEsc(pg_,u.room)+","+pgEsc(pg_,u.username)+","+pgEsc(pg_,u.hash)+","+
+                 pgEsc(pg_,u.salt)+","+pgEsc(pg_,u.role)+","+pgEsc(pg_,u.email)+","+
+                 pgEsc(pg_,u.phone)+","+pgEsc(pg_,u.createdAt)+")");
         }
+        // notices
+        exec("DELETE FROM notices");
+        for(auto&n:notices){
+            std::string act=n.active?"true":"false", urg=n.urgent?"true":"false";
+            exec("INSERT INTO notices VALUES("+pgEsc(pg_,n.id)+","+pgEsc(pg_,n.text)+","+act+","+urg+")");
+        }
+        // news
+        exec("DELETE FROM news");
+        for(auto&it:news){
+            exec("INSERT INTO news VALUES("+pgEsc(pg_,it.id)+","+pgEsc(pg_,it.title)+","+
+                 pgEsc(pg_,it.date)+","+pgEsc(pg_,it.category)+","+pgEsc(pg_,it.content)+")");
+        }
+        // events — participants stored as JSON array string
+        exec("DELETE FROM events");
+        for(auto&e:events){
+            // build participants as comma-separated
+            std::string parts="";
+            for(size_t i=0;i<e.participants.size();i++){
+                if(i) parts+="|";
+                parts+=e.participants[i];
+            }
+            exec("INSERT INTO events VALUES("+pgEsc(pg_,e.id)+","+pgEsc(pg_,e.name)+","+
+                 pgEsc(pg_,e.date)+","+pgEsc(pg_,e.time_)+","+pgEsc(pg_,e.description)+","+
+                 pgEsc(pg_,e.location)+","+std::to_string(e.maxParticipants)+","+
+                 pgEsc(pg_,parts)+","+pgEsc(pg_,e.createdAt)+")");
+        }
+        // laundry
+        exec("DELETE FROM laundry");
+        for(auto&b:laundry){
+            exec("INSERT INTO laundry VALUES("+pgEsc(pg_,b.id)+","+pgEsc(pg_,b.name)+","+
+                 pgEsc(pg_,b.room)+","+pgEsc(pg_,b.userId)+","+pgEsc(pg_,b.machineId)+","+
+                 pgEsc(pg_,b.date)+","+pgEsc(pg_,b.slot)+","+pgEsc(pg_,b.createdAt)+")");
+        }
+        // equip
+        exec("DELETE FROM equip");
+        for(auto&b:equip){
+            exec("INSERT INTO equip VALUES("+pgEsc(pg_,b.id)+","+pgEsc(pg_,b.name)+","+
+                 pgEsc(pg_,b.room)+","+pgEsc(pg_,b.userId)+","+pgEsc(pg_,b.item)+","+
+                 pgEsc(pg_,b.date)+","+pgEsc(pg_,b.startTime)+","+pgEsc(pg_,b.endTime)+","+
+                 std::to_string(b.duration)+","+pgEsc(pg_,b.createdAt)+")");
+        }
+    }
+
+    // ── Load: read from PG into memory ───────────────────────────
+    void load(const std::string& dbUrl){
+        pg_=PQconnectdb(dbUrl.c_str());
+        if(PQstatus(pg_)!=CONNECTION_OK){
+            std::cerr<<"PG connect failed: "<<PQerrorMessage(pg_)<<"\n";
+            std::cerr<<"Falling back to in-memory (data won't persist)\n";
+            pg_=nullptr; seed(); return;
+        }
+        std::cout<<"  PostgreSQL connected\n";
+        createSchema();
+
+        // users
+        {auto* r=query("SELECT id,name,room,username,hash,salt,role,email,phone,created_at FROM users");
+        for(int i=0;i<PQntuples(r);i++){
+            User u; u.id=pgStr(r,i,0); u.name=pgStr(r,i,1); u.room=pgStr(r,i,2);
+            u.username=pgStr(r,i,3); u.hash=pgStr(r,i,4); u.salt=pgStr(r,i,5);
+            u.role=pgStr(r,i,6); u.email=pgStr(r,i,7); u.phone=pgStr(r,i,8);
+            u.createdAt=pgStr(r,i,9);
+            users.push_back(u);
+        } PQclear(r);}
+
+        // notices
+        {auto* r=query("SELECT id,text,active,urgent FROM notices");
+        for(int i=0;i<PQntuples(r);i++){
+            Notice n; n.id=pgStr(r,i,0); n.text=pgStr(r,i,1);
+            n.active=pgBool(r,i,2); n.urgent=pgBool(r,i,3);
+            notices.push_back(n);
+        } PQclear(r);}
+
+        // news
+        {auto* r=query("SELECT id,title,date,category,content FROM news ORDER BY date DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            NewsItem it; it.id=pgStr(r,i,0); it.title=pgStr(r,i,1);
+            it.date=pgStr(r,i,2); it.category=pgStr(r,i,3); it.content=pgStr(r,i,4);
+            news.push_back(it);
+        } PQclear(r);}
+
+        // events
+        {auto* r=query("SELECT id,name,date,time_,description,location,max_participants,participants,created_at FROM events ORDER BY date");
+        for(int i=0;i<PQntuples(r);i++){
+            Event e; e.id=pgStr(r,i,0); e.name=pgStr(r,i,1); e.date=pgStr(r,i,2);
+            e.time_=pgStr(r,i,3); e.description=pgStr(r,i,4); e.location=pgStr(r,i,5);
+            e.maxParticipants=std::stoi(pgStr(r,i,6).empty()?"20":pgStr(r,i,6));
+            std::string parts=pgStr(r,i,7);
+            if(!parts.empty()){
+                std::istringstream ss(parts); std::string p;
+                while(std::getline(ss,p,'|')) if(!p.empty()) e.participants.push_back(p);
+            }
+            e.createdAt=pgStr(r,i,8);
+            events.push_back(e);
+        } PQclear(r);}
+
+        // laundry
+        {auto* r=query("SELECT id,name,room,user_id,machine_id,date,slot,created_at FROM laundry");
+        for(int i=0;i<PQntuples(r);i++){
+            LaundryBk b; b.id=pgStr(r,i,0); b.name=pgStr(r,i,1); b.room=pgStr(r,i,2);
+            b.userId=pgStr(r,i,3); b.machineId=pgStr(r,i,4);
+            b.date=pgStr(r,i,5); b.slot=pgStr(r,i,6); b.createdAt=pgStr(r,i,7);
+            laundry.push_back(b);
+        } PQclear(r);}
+
+        // equip
+        {auto* r=query("SELECT id,name,room,user_id,item,date,start_time,end_time,duration,created_at FROM equip");
+        for(int i=0;i<PQntuples(r);i++){
+            EquipBk b; b.id=pgStr(r,i,0); b.name=pgStr(r,i,1); b.room=pgStr(r,i,2);
+            b.userId=pgStr(r,i,3); b.item=pgStr(r,i,4); b.date=pgStr(r,i,5);
+            b.startTime=pgStr(r,i,6); b.endTime=pgStr(r,i,7);
+            b.duration=std::stoi(pgStr(r,i,8).empty()?"60":pgStr(r,i,8));
+            b.createdAt=pgStr(r,i,9);
+            equip.push_back(b);
+        } PQclear(r);}
+
+        ensureAdmin();
+        std::cout<<"  Loaded "<<users.size()<<" users, "<<news.size()
+                 <<" news, "<<events.size()<<" events\n";
     }
 
     void ensureAdmin(){
@@ -532,8 +599,11 @@ public:
         addE("Community Game Night",   dateOffset(7), "19:00","Join your neighbours for board games and card games. All skill levels welcome!","Lounge Area",15);
         addE("Shared Cooking Evening", dateOffset(14),"18:30","We cook together, we eat together. This month: Mediterranean food.","Kitchen",10);
         addE("Building Welcome Gathering",dateOffset(-7),"18:00","The first official welcome gathering for all current residents.","Lounge Area",20,{"Room 101","Room 102","Room 103","Room 104","Room 105"});
+
+        if(pg_) save();
     }
 };
+
 
 // ═══════════════════════════════════════════════════════════════════
 //  §7  Session store
@@ -998,7 +1068,7 @@ tbody td:first-child{color:var(--slate);font-weight:500}
       <img src="https://i.imgur.com/esh-Lq2dqye.png" alt="Logo" style="width:52px;height:52px;object-fit:contain;border-radius:10px;flex-shrink:0" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
       <div class="auth-logo-icon" style="display:none">🏠</div>
       <div>
-        <div class="auth-logo-name">Edge Student Hub Portal</div>
+        <div class="auth-logo-name">Residence Portal</div>
         <div class="auth-logo-sub">Shared Living Management System</div>
       </div>
     </div>
@@ -1033,6 +1103,12 @@ tbody td:first-child{color:var(--slate);font-weight:500}
           <input id="r-n" placeholder="e.g. Sarah Ahmed"></div>
         <div class="fg"><label>Room Number</label>
           <input id="r-r" placeholder="e.g. 204"></div>
+      </div>
+      <div class="fr">
+        <div class="fg"><label>Email</label>
+          <input id="r-e" type="email" placeholder="your@email.com" autocomplete="email"></div>
+        <div class="fg"><label>Phone Number</label>
+          <input id="r-ph" type="tel" placeholder="e.g. +49 123 456789"></div>
       </div>
       <div class="fg"><label>Username</label>
         <input id="r-u" placeholder="Choose a username" autocomplete="username"></div>
@@ -1302,7 +1378,7 @@ tbody td:first-child{color:var(--slate);font-weight:500}
       <div class="adm">
         <h3>👥 Registered Residents</h3>
         <div class="tw"><table>
-          <thead><tr><th>Name</th><th>Room</th><th>Username</th><th>Role</th><th>Joined</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Room</th><th>Username</th><th>Email</th><th>Phone</th><th>Role</th><th>Joined</th><th></th></tr></thead>
           <tbody id="adm-users"></tbody>
         </table></div>
       </div>
@@ -1391,13 +1467,15 @@ async function doLogin(){
 async function doRegister(){
   const name=document.getElementById('r-n').value.trim();
   const room=document.getElementById('r-r').value.trim();
+  const email=document.getElementById('r-e').value.trim();
+  const phone=document.getElementById('r-ph').value.trim();
   const uname=document.getElementById('r-u').value.trim();
   const pw=document.getElementById('r-p').value;
   const pw2=document.getElementById('r-p2').value;
-  if(!name||!room||!uname||!pw){ authErr('reg-err','All fields are required.'); return; }
+  if(!name||!room||!uname||!pw){ authErr('reg-err','Name, room, username and password are required.'); return; }
   if(pw!==pw2){ authErr('reg-err','Passwords do not match.'); return; }
   if(pw.length<6){ authErr('reg-err','Password must be at least 6 characters.'); return; }
-  const r=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,room,username:uname,password:pw})});
+  const r=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,room,email,phone,username:uname,password:pw})});
   const d=await r.json();
   if(d.error){ authErr('reg-err',d.error); return; }
   saveAuth(d.token,d.user); bootApp();
@@ -1768,10 +1846,12 @@ function renderAdmUsers(users){
   const tbody=document.getElementById('adm-users');
   tbody.innerHTML=users.length?users.map(u=>`<tr>
     <td>${esc(u.name)}</td><td>${esc(u.room)}</td><td>${esc(u.username)}</td>
+    <td style="font-size:12px;color:var(--muted)">${esc(u.email||'—')}</td>
+    <td style="font-size:12px;color:var(--muted)">${esc(u.phone||'—')}</td>
     <td><span class="badge ${u.role==='admin'?'bg':'bu'}">${u.role}</span></td>
     <td style="font-size:12px;color:var(--muted)">${(u.createdAt||'').split('T')[0]}</td>
     <td>${u.role!=='admin'?`<button class="btn btn-r btn-sm" onclick="delUser('${u.id}')">Remove</button>`:''}</td>
-  </tr>`).join(''):'<tr><td class="tbl-empty" colspan="6">No users.</td></tr>';
+  </tr>`).join(''):'<tr><td class="tbl-empty" colspan="8">No users.</td></tr>';
 }
 async function delUser(id){
   if(!confirm('Remove this resident?'))return;
@@ -1817,9 +1897,11 @@ int main(int argc, char** argv){
     signal(SIGPIPE, SIG_IGN);
 
     int port = 3000;
-    std::string dbPath = "residence_db.json";
     if(argc>1) port=std::atoi(argv[1]);
-    if(argc>2) dbPath=argv[2];
+
+    // Get Postgres URL from environment
+    const char* dbUrl=std::getenv("DATABASE_URL");
+    if(!dbUrl){ std::cerr<<"WARNING: DATABASE_URL not set — data will not persist!\n"; dbUrl=""; }
 
     std::cout<<"\n╔══════════════════════════════════════════╗\n";
     std::cout<<"║   Residence Management System  (C++)     ║\n";
@@ -1829,8 +1911,8 @@ int main(int argc, char** argv){
     Sessions sessions;
     SSEBroker sse;
 
-    std::cout<<"  Loading: "<<dbPath<<"\n";
-    db.load(dbPath);
+    std::cout<<"  Loading database…\n";
+    db.load(dbUrl);
 
     Server srv;
     // ── Routes (inlined) ──────────────────────────────────────────
@@ -1890,6 +1972,7 @@ int main(int argc, char** argv){
         auto body=parseJson(req.body);
         auto name=body["name"].asStr(), room=body["room"].asStr();
         auto uname=body["username"].asStr(), pw=body["password"].asStr();
+        auto email=body["email"].asStr(), phone=body["phone"].asStr();
         if(name.empty()||room.empty()||uname.empty()||pw.empty())
             { res.err(400,"Name, room number, username, and password are all required."); return; }
         if(pw.size()<6){ res.err(400,"Password must be at least 6 characters."); return; }
@@ -1898,6 +1981,7 @@ int main(int argc, char** argv){
             if(db.findByUsername(uname)){ res.err(409,"That username is already taken."); return; }
             if(db.findByRoom(room))     { res.err(409,"A resident is already registered for that room number."); return; }
             User u; u.id=makeUID(); u.name=name; u.room=room; u.username=uname;
+            u.email=email; u.phone=phone;
             u.salt=randomHex(16); u.hash=hashPw(pw,u.salt); u.role="resident"; u.createdAt=nowISO();
             db.users.push_back(u); db.save();
             auto tok=sessions.create(u.id);
