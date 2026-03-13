@@ -915,7 +915,7 @@ struct Mailer {
         return ok;
     }
 
-    // Send email via Gmail STARTTLS on port 587
+    // Send email via Gmail SSL on port 465 (direct TLS, no STARTTLS)
     bool send(const std::string& toAddr, const std::string& toName,
               const std::string& subject, const std::string& body){
         if(!enabled||toAddr.empty()) return false;
@@ -924,29 +924,17 @@ struct Mailer {
             if(!ctx){ std::cerr<<"  SMTP: SSL_CTX_new failed\n"; return false; }
             SSL_CTX_set_verify(ctx,SSL_VERIFY_NONE,nullptr);
 
-            BIO* bio=BIO_new_connect("smtp.gmail.com:587");
+            // Connect plain TCP first
+            BIO* bio=BIO_new_connect("smtp.gmail.com:465");
             if(!bio){ SSL_CTX_free(ctx); std::cerr<<"  SMTP: BIO_new_connect failed\n"; return false; }
             BIO_set_nbio(bio,0);
             if(BIO_do_connect(bio)<=0){
-                std::cerr<<"  SMTP: connect to smtp.gmail.com:587 failed\n";
+                std::cerr<<"  SMTP: connect to smtp.gmail.com:465 failed\n";
                 BIO_free_all(bio); SSL_CTX_free(ctx); return false;
             }
-            std::cout<<"  SMTP: connected to smtp.gmail.com:587\n";
+            std::cout<<"  SMTP: TCP connected to smtp.gmail.com:465\n";
 
-            std::string greeting=smtp_read(bio);
-            std::cout<<"  SMTP << "<<greeting;
-            if(greeting.find("220")==std::string::npos){
-                std::cerr<<"  SMTP: bad greeting\n";
-                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
-            }
-
-            smtp_cmd(bio,"EHLO residence.portal","250");
-            if(!smtp_cmd(bio,"STARTTLS","220")){
-                std::cerr<<"  SMTP: STARTTLS rejected\n";
-                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
-            }
-
-            // Upgrade to TLS
+            // Wrap immediately in SSL (port 465 = SSL from the start)
             BIO* ssl_bio=BIO_new_ssl(ctx,1);
             bio=BIO_push(ssl_bio,bio);
             if(BIO_do_handshake(bio)<=0){
@@ -954,6 +942,14 @@ struct Mailer {
                 BIO_free_all(bio); SSL_CTX_free(ctx); return false;
             }
             std::cout<<"  SMTP: TLS handshake OK\n";
+
+            // Now read greeting
+            std::string greeting=smtp_read(bio);
+            std::cout<<"  SMTP << "<<greeting;
+            if(greeting.find("220")==std::string::npos){
+                std::cerr<<"  SMTP: bad greeting\n";
+                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
+            }
 
             smtp_cmd(bio,"EHLO residence.portal","250");
             smtp_cmd(bio,"AUTH LOGIN","334");
@@ -1145,13 +1141,33 @@ main{max-width:1100px;margin:0 auto;padding:32px 24px 64px;width:100%}
 .hero::before{content:'';position:absolute;top:-40px;right:-40px;width:220px;height:220px;background:radial-gradient(circle,rgba(201,128,58,.25) 0%,transparent 70%);border-radius:50%}
 .hero-title{font-family:var(--serif);font-size:32px;font-weight:700;margin-bottom:6px;position:relative}
 .hero-sub{color:rgba(255,255,255,.65);font-size:15px;position:relative}
-.hero-date{position:absolute;top:28px;right:32px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);padding:8px 16px;border-radius:var(--r);font-size:13px;color:rgba(255,255,255,.8)}
+.hero-date{position:absolute;top:22px;right:28px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);padding:10px 18px;border-radius:var(--r);text-align:right}
+.clock-time{font-size:26px;font-weight:700;font-family:var(--sans);color:#fff;letter-spacing:2px;line-height:1}
+.clock-date{font-size:12px;color:rgba(255,255,255,.7);margin-top:4px;letter-spacing:.3px}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:28px}
 .sc{background:var(--parchment);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px;box-shadow:0 2px 8px var(--shadow)}
 .sc-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted)}
 .sc-val{font-family:var(--serif);font-size:28px;font-weight:700;color:var(--slate);margin-top:2px}
 .dash-grid{display:grid;grid-template-columns:1fr 370px;gap:24px}
 @media(max-width:820px){.dash-grid{grid-template-columns:1fr}}
+.mini-cal{background:var(--parchment);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px;box-shadow:0 2px 8px var(--shadow);margin-bottom:24px}
+.mini-cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.mini-cal-title{font-family:var(--serif);font-size:16px;font-weight:700;color:var(--slate)}
+.mini-cal-nav{background:none;border:1px solid var(--border);border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:all .15s}
+.mini-cal-nav:hover{background:var(--cream2);color:var(--slate)}
+.mini-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center}
+.mini-cal-dow{font-size:10px;font-weight:700;color:var(--muted);padding:3px 0;letter-spacing:.5px;text-transform:uppercase}
+.cal-day{font-size:12px;padding:5px 2px;border-radius:6px;cursor:default;color:var(--slate);line-height:1.4;position:relative}
+.cal-day.other{color:var(--border)}
+.cal-day.today{background:var(--amber);color:#fff;font-weight:700}
+.cal-day.has-event{font-weight:700;color:var(--amber)}
+.cal-day.has-event::after{content:'';position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;background:var(--amber);border-radius:50%}
+.cal-day.today.has-event{background:var(--amber)}
+.cal-day.today.has-event::after{background:#fff}
+.cal-event-list{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+.cal-event-item{font-size:12px;padding:5px 8px;border-radius:6px;background:var(--cream2);margin-bottom:5px;display:flex;gap:8px;align-items:center;cursor:pointer}
+.cal-event-item:hover{background:var(--cream3)}
+.cal-event-dot{width:7px;height:7px;background:var(--amber);border-radius:50%;flex-shrink:0}
 
 /* ── NEWS ────────────────────────────────────────── */
 .nc{border-left:3px solid var(--amber)}
@@ -1322,7 +1338,10 @@ tbody td:first-child{color:var(--slate);font-weight:500}
       <div class="hero">
         <div class="hero-title" id="hero-title">Good to see you 👋</div>
         <div class="hero-sub">Your Residence Portal — news, events, and bookings in one place.</div>
-        <div class="hero-date" id="hero-date"></div>
+        <div class="hero-date" id="hero-date">
+          <div class="clock-time" id="clock-time">00:00:00</div>
+          <div class="clock-date" id="clock-date"></div>
+        </div>
       </div>
       <div class="stats">
         <div class="sc"><div class="sc-lbl">Announcements</div><div class="sc-val" id="st-news">—</div></div>
@@ -1341,6 +1360,18 @@ tbody td:first-child{color:var(--slate);font-weight:500}
           <div id="dash-evts"></div>
           <button class="btn btn-gh" style="margin-top:14px" onclick="showPage('events')">All events →</button>
         </div>
+      </div>
+      <!-- MINI CALENDAR -->
+      <div class="mini-cal" id="mini-cal-widget">
+        <div class="mini-cal-head">
+          <div class="mini-cal-title" id="cal-month-label"></div>
+          <div style="display:flex;gap:6px">
+            <button class="mini-cal-nav" onclick="calNav(-1)">‹</button>
+            <button class="mini-cal-nav" onclick="calNav(1)">›</button>
+          </div>
+        </div>
+        <div class="mini-cal-grid" id="cal-grid"></div>
+        <div class="cal-event-list" id="cal-event-list"></div>
       </div>
     </div>
 
@@ -1451,7 +1482,8 @@ tbody td:first-child{color:var(--slate);font-weight:500}
         <table><thead><tr><th>Name</th><th>Room</th><th>Item</th><th>Date</th><th>From</th><th>Until</th><th></th></tr></thead>
         <tbody id="eq-tbody"></tbody></table>
       </div>
-    </div>
+      </div><!-- end grid -->
+    </div><!-- end page-equip -->
 
     <!-- ADMIN -->
     <div class="page" id="page-admin">
@@ -1628,7 +1660,6 @@ function bootApp(){
   document.getElementById('ua').textContent=(me.name[0]||'?').toUpperCase();
   // hero
   document.getElementById('hero-title').textContent='Welcome back, '+me.name.split(' ')[0]+' 👋';
-  document.getElementById('hero-date').textContent=new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   // admin nav
   document.getElementById('admin-btn').style.display=me.role==='admin'?'':'none';
   // identity labels in booking pages
@@ -1644,6 +1675,8 @@ function bootApp(){
   connectSSE();
   Promise.all([loadNews(),loadEvts(),loadLnd(),loadEq(),loadNotices()]);
   if(me.role==='admin') loadAdmUsers();
+  startClock();
+  renderMiniCal();
 }
 
 async function checkExistingSession(){
@@ -1656,7 +1689,7 @@ async function checkExistingSession(){
 
 // ── LOADERS ─────────────────────────────────────────────────────
 async function loadNews(){ const d=await GET('/api/news'); if(Array.isArray(d)){NEWS=d;renderNews();renderDashNews();updateStats();}}
-async function loadEvts(){ const d=await GET('/api/events'); if(Array.isArray(d)){EVTS=d;renderEvts();renderDashEvts();renderAdmEvts();updateStats();}}
+async function loadEvts(){ const d=await GET('/api/events'); if(Array.isArray(d)){EVTS=d;window._allEvents=d;renderEvts();renderDashEvts();renderAdmEvts();updateStats();renderMiniCal();}}
 async function loadLnd(){ const d=await GET('/api/laundry'); if(Array.isArray(d)){LND=d;renderLnd();renderAdmLnd();renderSlots();updateStats();}}
 async function loadEq(){ const d=await GET('/api/equip'); if(Array.isArray(d)){EQ=d;renderEq();renderAdmEq();updateStats();}}
 async function loadNotices(){ const d=await GET('/api/notices'); if(Array.isArray(d)){NOTICES=d;renderNotices();renderAdmNotices();}}
@@ -1971,6 +2004,115 @@ function toast(msg,type=''){
 
 // ── UTILS ────────────────────────────────────────────────────────
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── DIGITAL CLOCK ────────────────────────────────────────────────
+function startClock(){
+  function tick(){
+    const now=new Date();
+    const t=now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const d=now.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+    const ct=document.getElementById('clock-time');
+    const cd=document.getElementById('clock-date');
+    if(ct) ct.textContent=t;
+    if(cd) cd.textContent=d;
+  }
+  tick();
+  setInterval(tick,1000);
+}
+
+// ── MINI CALENDAR ─────────────────────────────────────────────────
+let calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
+
+function calNav(dir){
+  calMonth+=dir;
+  if(calMonth>11){calMonth=0;calYear++;}
+  if(calMonth<0){calMonth=11;calYear--;}
+  renderMiniCal();
+}
+
+function renderMiniCal(){
+  const events=window._allEvents||[];
+  // Build set of event dates this month: "YYYY-MM-DD"
+  const eventDates={};
+  events.forEach(e=>{
+    if(e.date) {
+      eventDates[e.date]=eventDates[e.date]||[];
+      eventDates[e.date].push(e);
+    }
+  });
+
+  const today=new Date();
+  const todayStr=today.toISOString().split('T')[0];
+  const monthNames=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const label=document.getElementById('cal-month-label');
+  if(label) label.textContent=monthNames[calMonth]+' '+calYear;
+
+  const grid=document.getElementById('cal-grid');
+  if(!grid) return;
+
+  // Day-of-week headers
+  const dows=['Mo','Tu','We','Th','Fr','Sa','Su'];
+  let html=dows.map(d=>`<div class="mini-cal-dow">${d}</div>`).join('');
+
+  // First day of month (0=Sun…6=Sat), convert to Mon-based
+  const first=new Date(calYear,calMonth,1).getDay();
+  const startOffset=(first===0)?6:first-1;
+  const daysInMonth=new Date(calYear,calMonth+1,0).getDate();
+  const prevDays=new Date(calYear,calMonth,0).getDate();
+
+  // Previous month padding
+  for(let i=startOffset-1;i>=0;i--){
+    html+=`<div class="cal-day other">${prevDays-i}</div>`;
+  }
+
+  // Current month days
+  for(let d=1;d<=daysInMonth;d++){
+    const ds=calYear+'-'+(String(calMonth+1).padStart(2,'0'))+'-'+(String(d).padStart(2,'0'));
+    const isToday=ds===todayStr;
+    const hasEv=!!eventDates[ds];
+    let cls='cal-day'+(isToday?' today':'')+(hasEv?' has-event':'');
+    const title=hasEv?eventDates[ds].map(e=>e.name).join(', '):'';
+    html+=`<div class="${cls}" title="${esc(title)}" onclick="calDayClick('${ds}')">${d}</div>`;
+  }
+
+  // Next month padding
+  const totalCells=Math.ceil((startOffset+daysInMonth)/7)*7;
+  const after=totalCells-(startOffset+daysInMonth);
+  for(let i=1;i<=after;i++) html+=`<div class="cal-day other">${i}</div>`;
+
+  grid.innerHTML=html;
+
+  // Show events for today or selected day
+  const sel=window._calSelected||todayStr;
+  renderCalEvents(sel,eventDates);
+}
+
+let _calSelected=null;
+function calDayClick(ds){
+  window._calSelected=ds;
+  const events=window._allEvents||[];
+  const eventDates={};
+  events.forEach(e=>{ if(e.date){eventDates[e.date]=eventDates[e.date]||[];eventDates[e.date].push(e);} });
+  renderCalEvents(ds,eventDates);
+}
+
+function renderCalEvents(ds,eventDates){
+  const el=document.getElementById('cal-event-list');
+  if(!el) return;
+  const evs=eventDates[ds]||[];
+  const d=new Date(ds+'T12:00:00');
+  const label=d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'});
+  if(!evs.length){
+    el.innerHTML=`<div style="font-size:12px;color:var(--muted)">${label} — no events</div>`;
+    return;
+  }
+  el.innerHTML=`<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:6px">${label}</div>`+
+    evs.map(e=>`<div class="cal-event-item" onclick="showPage('events')">
+      <div class="cal-event-dot"></div>
+      <div><div style="font-weight:600;color:var(--slate)">${esc(e.name)}</div>
+      <div style="color:var(--muted);font-size:11px">${esc(e.time_||'')}${e.location?' · '+esc(e.location):''}</div></div>
+    </div>`).join('');
+}
 
 // ── INIT ─────────────────────────────────────────────────────────
 checkExistingSession();
