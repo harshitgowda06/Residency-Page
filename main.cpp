@@ -1,19 +1,18 @@
 /*
-
-- ╔══════════════════════════════════════════════════════════════════╗
-- ║   Residence Management System  —  C++ Single-File Backend       ║
-- ╠══════════════════════════════════════════════════════════════════╣
-- ║  Build:  g++ -std=c++17 -O2 -o residence main.cpp -lpthread     ║
-- ║          -lpq                                                    ║
-- ║  Run:    DATABASE_URL=<postgres-url> ./residence 3000            ║
-- ║  Open:   http://localhost:3000                                   ║
-- ║                                                                  ║
-- ║  Default admin  →  username: admin   password: admin123         ║
-- ║  Residents self-register with name + room number + password     ║
-- ╚══════════════════════════════════════════════════════════════════╝
-- 
-- Dependencies: libpq (PostgreSQL C client), pthreads
-  */
+ * ╔══════════════════════════════════════════════════════════════════╗
+ * ║   Residence Management System  —  C++ Single-File Backend       ║
+ * ╠══════════════════════════════════════════════════════════════════╣
+ * ║  Build:  g++ -std=c++17 -O2 -o residence main.cpp -lpthread     ║
+ * ║          -lpq                                                    ║
+ * ║  Run:    DATABASE_URL=<postgres-url> ./residence 3000            ║
+ * ║  Open:   http://localhost:3000                                   ║
+ * ║                                                                  ║
+ * ║  Default admin  →  username: admin   password: admin123         ║
+ * ║  Residents self-register with name + room number + password     ║
+ * ╚══════════════════════════════════════════════════════════════════╝
+ *
+ *  Dependencies: libpq (PostgreSQL C client), pthreads
+ */
 
 // ─── system headers ───────────────────────────────────────────────
 #include <arpa/inet.h>
@@ -51,254 +50,248 @@
 //  §1  SHA-256  (pure C++ — no OpenSSL needed)
 // ═══════════════════════════════════════════════════════════════════
 namespace SHA256Impl {
-static const uint32_t K[64]={
-0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-};
-inline uint32_t rotr(uint32_t x,int n){ return (x>>n)|(x<<(32-n)); }
+    static const uint32_t K[64]={
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    };
+    inline uint32_t rotr(uint32_t x,int n){ return (x>>n)|(x<<(32-n)); }
 
-```
-std::string hash(const std::string& msg){
-    uint32_t h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a;
-    uint32_t h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
-    std::vector<uint8_t> data(msg.begin(),msg.end());
-    uint64_t bitlen=data.size()*8;
-    data.push_back(0x80);
-    while(data.size()%64!=56) data.push_back(0);
-    for(int i=7;i>=0;i--) data.push_back((bitlen>>(i*8))&0xFF);
-    for(size_t chunk=0;chunk<data.size();chunk+=64){
-        uint32_t w[64]={};
-        for(int i=0;i<16;i++)
-            w[i]=(uint32_t(data[chunk+i*4])<<24)|(uint32_t(data[chunk+i*4+1])<<16)
-                |(uint32_t(data[chunk+i*4+2])<<8)|data[chunk+i*4+3];
-        for(int i=16;i<64;i++){
-            uint32_t s0=rotr(w[i-15],7)^rotr(w[i-15],18)^(w[i-15]>>3);
-            uint32_t s1=rotr(w[i-2],17)^rotr(w[i-2],19)^(w[i-2]>>10);
-            w[i]=w[i-16]+s0+w[i-7]+s1;
+    std::string hash(const std::string& msg){
+        uint32_t h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a;
+        uint32_t h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
+        std::vector<uint8_t> data(msg.begin(),msg.end());
+        uint64_t bitlen=data.size()*8;
+        data.push_back(0x80);
+        while(data.size()%64!=56) data.push_back(0);
+        for(int i=7;i>=0;i--) data.push_back((bitlen>>(i*8))&0xFF);
+        for(size_t chunk=0;chunk<data.size();chunk+=64){
+            uint32_t w[64]={};
+            for(int i=0;i<16;i++)
+                w[i]=(uint32_t(data[chunk+i*4])<<24)|(uint32_t(data[chunk+i*4+1])<<16)
+                    |(uint32_t(data[chunk+i*4+2])<<8)|data[chunk+i*4+3];
+            for(int i=16;i<64;i++){
+                uint32_t s0=rotr(w[i-15],7)^rotr(w[i-15],18)^(w[i-15]>>3);
+                uint32_t s1=rotr(w[i-2],17)^rotr(w[i-2],19)^(w[i-2]>>10);
+                w[i]=w[i-16]+s0+w[i-7]+s1;
+            }
+            uint32_t a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+            for(int i=0;i<64;i++){
+                uint32_t S1=rotr(e,6)^rotr(e,11)^rotr(e,25);
+                uint32_t ch=(e&f)^(~e&g);
+                uint32_t t1=h+S1+ch+K[i]+w[i];
+                uint32_t S0=rotr(a,2)^rotr(a,13)^rotr(a,22);
+                uint32_t maj=(a&b)^(a&c)^(b&c);
+                uint32_t t2=S0+maj;
+                h=g;g=f;f=e;e=d+t1;d=c;c=b;b=a;a=t1+t2;
+            }
+            h0+=a;h1+=b;h2+=c;h3+=d;h4+=e;h5+=f;h6+=g;h7+=h;
         }
-        uint32_t a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
-        for(int i=0;i<64;i++){
-            uint32_t S1=rotr(e,6)^rotr(e,11)^rotr(e,25);
-            uint32_t ch=(e&f)^(~e&g);
-            uint32_t t1=h+S1+ch+K[i]+w[i];
-            uint32_t S0=rotr(a,2)^rotr(a,13)^rotr(a,22);
-            uint32_t maj=(a&b)^(a&c)^(b&c);
-            uint32_t t2=S0+maj;
-            h=g;g=f;f=e;e=d+t1;d=c;c=b;b=a;a=t1+t2;
-        }
-        h0+=a;h1+=b;h2+=c;h3+=d;h4+=e;h5+=f;h6+=g;h7+=h;
+        std::ostringstream o;
+        for(auto v:{h0,h1,h2,h3,h4,h5,h6,h7})
+            o<<std::hex<<std::setw(8)<<std::setfill('0')<<v;
+        return o.str();
     }
-    std::ostringstream o;
-    for(auto v:{h0,h1,h2,h3,h4,h5,h6,h7})
-        o<<std::hex<<std::setw(8)<<std::setfill('0')<<v;
-    return o.str();
-}
-```
-
 } // namespace SHA256Impl
 
 // ═══════════════════════════════════════════════════════════════════
 //  §2  Utilities
 // ═══════════════════════════════════════════════════════════════════
 static std::string randomHex(int bytes){
-std::random_device rd;
-std::string out; out.reserve(bytes*2);
-for(int i=0;i<bytes;i++){
-char buf[3]; snprintf(buf,sizeof(buf),”%02x”,rd()&0xFF);
-out+=buf;
-}
-return out;
+    std::random_device rd;
+    std::string out; out.reserve(bytes*2);
+    for(int i=0;i<bytes;i++){
+        char buf[3]; snprintf(buf,sizeof(buf),"%02x",rd()&0xFF);
+        out+=buf;
+    }
+    return out;
 }
 
 static std::string makeUID(){
-static std::atomic<uint64_t> cnt{0};
-auto ns=std::chrono::system_clock::now().time_since_epoch().count();
-std::ostringstream o;
-o<<std::hex<<ns<<std::hex<<++cnt;
-return o.str();
+    static std::atomic<uint64_t> cnt{0};
+    auto ns=std::chrono::system_clock::now().time_since_epoch().count();
+    std::ostringstream o;
+    o<<std::hex<<ns<<std::hex<<++cnt;
+    return o.str();
 }
 
 static std::string hashPw(const std::string& pw, const std::string& salt){
-// iterated SHA-256 key stretching (10 000 rounds)
-std::string h=salt+pw;
-for(int i=0;i<10000;i++) h=SHA256Impl::hash(h+std::to_string(i));
-return h;
+    // iterated SHA-256 key stretching (10 000 rounds)
+    std::string h=salt+pw;
+    for(int i=0;i<10000;i++) h=SHA256Impl::hash(h+std::to_string(i));
+    return h;
 }
 
 static std::string todayStr(){
-std::time_t t=std::time(nullptr);
-std::tm tm=*std::localtime(&t);
-char buf[16]; std::strftime(buf,sizeof(buf),”%Y-%m-%d”,&tm);
-return buf;
+    std::time_t t=std::time(nullptr);
+    std::tm tm=*std::localtime(&t);
+    char buf[16]; std::strftime(buf,sizeof(buf),"%Y-%m-%d",&tm);
+    return buf;
 }
 static std::string nowISO(){
-std::time_t t=std::time(nullptr);
-std::tm tm=*std::localtime(&t);
-char buf[32]; std::strftime(buf,sizeof(buf),”%Y-%m-%dT%H:%M:%S”,&tm);
-return buf;
+    std::time_t t=std::time(nullptr);
+    std::tm tm=*std::localtime(&t);
+    char buf[32]; std::strftime(buf,sizeof(buf),"%Y-%m-%dT%H:%M:%S",&tm);
+    return buf;
 }
 static std::string dateOffset(int days){
-std::time_t t=std::time(nullptr)+(std::time_t)days*86400;
-std::tm tm=*std::localtime(&t);
-char buf[16]; std::strftime(buf,sizeof(buf),”%Y-%m-%d”,&tm);
-return buf;
+    std::time_t t=std::time(nullptr)+(std::time_t)days*86400;
+    std::tm tm=*std::localtime(&t);
+    char buf[16]; std::strftime(buf,sizeof(buf),"%Y-%m-%d",&tm);
+    return buf;
 }
 
 static std::string toLower(std::string s){
-std::transform(s.begin(),s.end(),s.begin(),::tolower); return s;
+    std::transform(s.begin(),s.end(),s.begin(),::tolower); return s;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 //  §3  JSON engine
 // ═══════════════════════════════════════════════════════════════════
 struct Json {
-enum Type { NUL,BOOL,NUM,STR,ARR,OBJ } type=NUL;
-bool b=false; double n=0; std::string s;
-std::vector<Json> arr;
-std::vector<std::pair<std::string,Json>> obj;
+    enum Type { NUL,BOOL,NUM,STR,ARR,OBJ } type=NUL;
+    bool b=false; double n=0; std::string s;
+    std::vector<Json> arr;
+    std::vector<std::pair<std::string,Json>> obj;
 
-```
-Json(){}
-explicit Json(bool v):type(BOOL),b(v){}
-explicit Json(double v):type(NUM),n(v){}
-explicit Json(int v):type(NUM),n(v){}
-explicit Json(long long v):type(NUM),n((double)v){}
-explicit Json(const std::string& v):type(STR),s(v){}
-explicit Json(const char* v):type(STR),s(v){}
-static Json array() { Json j; j.type=ARR; return j; }
-static Json object(){ Json j; j.type=OBJ; return j; }
+    Json(){}
+    explicit Json(bool v):type(BOOL),b(v){}
+    explicit Json(double v):type(NUM),n(v){}
+    explicit Json(int v):type(NUM),n(v){}
+    explicit Json(long long v):type(NUM),n((double)v){}
+    explicit Json(const std::string& v):type(STR),s(v){}
+    explicit Json(const char* v):type(STR),s(v){}
+    static Json array() { Json j; j.type=ARR; return j; }
+    static Json object(){ Json j; j.type=OBJ; return j; }
 
-Json& operator[](const std::string& k){
-    for(auto&p:obj) if(p.first==k) return p.second;
-    obj.push_back({k,Json()}); return obj.back().second;
-}
-const Json& operator[](const std::string& k) const {
-    static Json nil; for(auto&p:obj) if(p.first==k) return p.second; return nil;
-}
-bool        has(const std::string& k) const { for(auto&p:obj) if(p.first==k) return true; return false; }
-void        set(const std::string& k, Json v){ (*this)[k]=std::move(v); }
-void        push(Json v){ arr.push_back(std::move(v)); }
-bool        asBool()   const { return b; }
-double      asNum()    const { return n; }
-long long   asInt()    const { return (long long)n; }
-std::string asStr()    const { return s; }
-
-std::string dump(int ind=0, int cur=0) const {
-    std::string pad(cur,' '), ipad(cur+ind,' ');
-    std::ostringstream o;
-    switch(type){
-        case NUL: o<<"null"; break;
-        case BOOL:o<<(b?"true":"false"); break;
-        case NUM: if(n==(long long)n) o<<(long long)n; else o<<std::fixed<<std::setprecision(4)<<n; break;
-        case STR: {
-            o<<'"';
-            for(char c:s){
-                if(c=='"') o<<"\\\"";
-                else if(c=='\\') o<<"\\\\";
-                else if(c=='\n') o<<"\\n";
-                else if(c=='\r') o<<"\\r";
-                else if(c=='\t') o<<"\\t";
-                else             o<<c;
-            }
-            o<<'"'; break;
-        }
-        case ARR: {
-            o<<'[';
-            for(size_t i=0;i<arr.size();i++){
-                if(ind) o<<'\n'<<ipad;
-                o<<arr[i].dump(ind,cur+ind);
-                if(i+1<arr.size()) o<<',';
-            }
-            if(ind&&!arr.empty()) o<<'\n'<<pad;
-            o<<']'; break;
-        }
-        case OBJ: {
-            o<<'{';
-            for(size_t i=0;i<obj.size();i++){
-                if(ind) o<<'\n'<<ipad;
-                // write key
-                o<<'"'; for(char c:obj[i].first){ if(c=='"')o<<"\\\""; else o<<c; } o<<'"';
-                o<<':';
-                if(ind) o<<' ';
-                o<<obj[i].second.dump(ind,cur+ind);
-                if(i+1<obj.size()) o<<',';
-            }
-            if(ind&&!obj.empty()) o<<'\n'<<pad;
-            o<<'}'; break;
-        }
+    Json& operator[](const std::string& k){
+        for(auto&p:obj) if(p.first==k) return p.second;
+        obj.push_back({k,Json()}); return obj.back().second;
     }
-    return o.str();
-}
-```
+    const Json& operator[](const std::string& k) const {
+        static Json nil; for(auto&p:obj) if(p.first==k) return p.second; return nil;
+    }
+    bool        has(const std::string& k) const { for(auto&p:obj) if(p.first==k) return true; return false; }
+    void        set(const std::string& k, Json v){ (*this)[k]=std::move(v); }
+    void        push(Json v){ arr.push_back(std::move(v)); }
+    bool        asBool()   const { return b; }
+    double      asNum()    const { return n; }
+    long long   asInt()    const { return (long long)n; }
+    std::string asStr()    const { return s; }
 
+    std::string dump(int ind=0, int cur=0) const {
+        std::string pad(cur,' '), ipad(cur+ind,' ');
+        std::ostringstream o;
+        switch(type){
+            case NUL: o<<"null"; break;
+            case BOOL:o<<(b?"true":"false"); break;
+            case NUM: if(n==(long long)n) o<<(long long)n; else o<<std::fixed<<std::setprecision(4)<<n; break;
+            case STR: {
+                o<<'"';
+                for(char c:s){
+                    if(c=='"') o<<"\\\"";
+                    else if(c=='\\') o<<"\\\\";
+                    else if(c=='\n') o<<"\\n";
+                    else if(c=='\r') o<<"\\r";
+                    else if(c=='\t') o<<"\\t";
+                    else             o<<c;
+                }
+                o<<'"'; break;
+            }
+            case ARR: {
+                o<<'[';
+                for(size_t i=0;i<arr.size();i++){
+                    if(ind) o<<'\n'<<ipad;
+                    o<<arr[i].dump(ind,cur+ind);
+                    if(i+1<arr.size()) o<<',';
+                }
+                if(ind&&!arr.empty()) o<<'\n'<<pad;
+                o<<']'; break;
+            }
+            case OBJ: {
+                o<<'{';
+                for(size_t i=0;i<obj.size();i++){
+                    if(ind) o<<'\n'<<ipad;
+                    // write key
+                    o<<'"'; for(char c:obj[i].first){ if(c=='"')o<<"\\\""; else o<<c; } o<<'"';
+                    o<<':';
+                    if(ind) o<<' ';
+                    o<<obj[i].second.dump(ind,cur+ind);
+                    if(i+1<obj.size()) o<<',';
+                }
+                if(ind&&!obj.empty()) o<<'\n'<<pad;
+                o<<'}'; break;
+            }
+        }
+        return o.str();
+    }
 };
 
 struct JsonParser {
-const std::string& src; size_t pos=0;
-JsonParser(const std::string& s):src(s){}
-void ws(){ while(pos<src.size()&&isspace((unsigned char)src[pos])) pos++; }
-Json parse(){
-ws(); if(pos>=src.size()) return Json();
-char c=src[pos];
-if(c==’{’) return parseObj();
-if(c==’[’) return parseArr();
-if(c==’”’) return parseStr();
-if(c==‘t’){ pos+=4; return Json(true); }
-if(c==‘f’){ pos+=5; return Json(false); }
-if(c==‘n’){ pos+=4; return Json(); }
-return parseNum();
-}
-Json parseObj(){
-Json j=Json::object(); pos++; ws();
-if(pos<src.size()&&src[pos]==’}’){ pos++; return j; }
-while(pos<src.size()){
-ws(); auto k=parseStr().asStr(); ws(); pos++; ws();
-j.set(k,parse()); ws();
-if(pos<src.size()&&src[pos]==’,’) pos++;
-ws(); if(pos<src.size()&&src[pos]==’}’){ pos++; break; }
-}
-return j;
-}
-Json parseArr(){
-Json j=Json::array(); pos++; ws();
-if(pos<src.size()&&src[pos]==’]’){ pos++; return j; }
-while(pos<src.size()){
-ws(); j.push(parse()); ws();
-if(pos<src.size()&&src[pos]==’,’) pos++;
-ws(); if(pos<src.size()&&src[pos]==’]’){ pos++; break; }
-}
-return j;
-}
-Json parseStr(){
-pos++; std::string out;
-while(pos<src.size()&&src[pos]!=’”’){
-if(src[pos]==’\’){
-pos++; if(pos>=src.size()) break;
-char e=src[pos];
-if(e==’”’)  out+=’”’;
-else if(e==’\’) out+=’\’;
-else if(e==‘n’)  out+=’\n’;
-else if(e==‘r’)  out+=’\r’;
-else if(e==‘t’)  out+=’\t’;
-else out+=e;
-} else { out+=src[pos]; }
-pos++;
-}
-pos++; return Json(out);
-}
-Json parseNum(){
-size_t st=pos;
-if(pos<src.size()&&src[pos]==’-’) pos++;
-while(pos<src.size()&&(isdigit((unsigned char)src[pos])||src[pos]==’.’
-||src[pos]==‘e’||src[pos]==‘E’||src[pos]==’+’||src[pos]==’-’)) pos++;
-try{ return Json(std::stod(src.substr(st,pos-st))); } catch(…){ return Json(); }
-}
+    const std::string& src; size_t pos=0;
+    JsonParser(const std::string& s):src(s){}
+    void ws(){ while(pos<src.size()&&isspace((unsigned char)src[pos])) pos++; }
+    Json parse(){
+        ws(); if(pos>=src.size()) return Json();
+        char c=src[pos];
+        if(c=='{') return parseObj();
+        if(c=='[') return parseArr();
+        if(c=='"') return parseStr();
+        if(c=='t'){ pos+=4; return Json(true); }
+        if(c=='f'){ pos+=5; return Json(false); }
+        if(c=='n'){ pos+=4; return Json(); }
+        return parseNum();
+    }
+    Json parseObj(){
+        Json j=Json::object(); pos++; ws();
+        if(pos<src.size()&&src[pos]=='}'){ pos++; return j; }
+        while(pos<src.size()){
+            ws(); auto k=parseStr().asStr(); ws(); pos++; ws();
+            j.set(k,parse()); ws();
+            if(pos<src.size()&&src[pos]==',') pos++;
+            ws(); if(pos<src.size()&&src[pos]=='}'){ pos++; break; }
+        }
+        return j;
+    }
+    Json parseArr(){
+        Json j=Json::array(); pos++; ws();
+        if(pos<src.size()&&src[pos]==']'){ pos++; return j; }
+        while(pos<src.size()){
+            ws(); j.push(parse()); ws();
+            if(pos<src.size()&&src[pos]==',') pos++;
+            ws(); if(pos<src.size()&&src[pos]==']'){ pos++; break; }
+        }
+        return j;
+    }
+    Json parseStr(){
+        pos++; std::string out;
+        while(pos<src.size()&&src[pos]!='"'){
+            if(src[pos]=='\\'){
+                pos++; if(pos>=src.size()) break;
+                char e=src[pos];
+                if(e=='"')  out+='"';
+                else if(e=='\\') out+='\\';
+                else if(e=='n')  out+='\n';
+                else if(e=='r')  out+='\r';
+                else if(e=='t')  out+='\t';
+                else out+=e;
+            } else { out+=src[pos]; }
+            pos++;
+        }
+        pos++; return Json(out);
+    }
+    Json parseNum(){
+        size_t st=pos;
+        if(pos<src.size()&&src[pos]=='-') pos++;
+        while(pos<src.size()&&(isdigit((unsigned char)src[pos])||src[pos]=='.'
+              ||src[pos]=='e'||src[pos]=='E'||src[pos]=='+'||src[pos]=='-')) pos++;
+        try{ return Json(std::stod(src.substr(st,pos-st))); } catch(...){ return Json(); }
+    }
 };
 static Json parseJson(const std::string& s){ JsonParser p(s); return p.parse(); }
 
@@ -309,9 +302,9 @@ struct User      { std::string id,name,room,username,hash,salt,role,email,phone,
 struct Notice    { std::string id,text; bool active=true,urgent=false; };
 struct NewsItem  { std::string id,title,date,category,content; };
 struct Event     {
-std::string id,name,date,time_,description,location,createdAt;
-int maxParticipants=20;
-std::vector<std::string> participants;
+    std::string id,name,date,time_,description,location,createdAt;
+    int maxParticipants=20;
+    std::vector<std::string> participants;
 };
 struct LaundryBk { std::string id,name,room,userId,machineId,date,slot,createdAt; };
 struct EquipBk   { std::string id,name,room,userId,item,date,startTime,endTime,createdAt; int duration=60; };
@@ -324,85 +317,85 @@ struct LostFound { std::string id,userId,name,room,type,title,description,create
 //  §5  JSON serialisers
 // ═══════════════════════════════════════════════════════════════════
 static Json toJ(const User& u){
-Json j=Json::object();
-j[“id”]=Json(u.id); j[“name”]=Json(u.name); j[“room”]=Json(u.room);
-j[“username”]=Json(u.username); j[“role”]=Json(u.role);
-j[“email”]=Json(u.email); j[“phone”]=Json(u.phone);
-j[“createdAt”]=Json(u.createdAt);
-return j;
+    Json j=Json::object();
+    j["id"]=Json(u.id); j["name"]=Json(u.name); j["room"]=Json(u.room);
+    j["username"]=Json(u.username); j["role"]=Json(u.role);
+    j["email"]=Json(u.email); j["phone"]=Json(u.phone);
+    j["createdAt"]=Json(u.createdAt);
+    return j;
 }
 static Json toJ(const Notice& n){
-Json j=Json::object();
-j[“id”]=Json(n.id); j[“text”]=Json(n.text); j[“active”]=Json(n.active); j[“urgent”]=Json(n.urgent);
-return j;
+    Json j=Json::object();
+    j["id"]=Json(n.id); j["text"]=Json(n.text); j["active"]=Json(n.active); j["urgent"]=Json(n.urgent);
+    return j;
 }
 static Json toJ(const NewsItem& it){
-Json j=Json::object();
-j[“id”]=Json(it.id); j[“title”]=Json(it.title); j[“date”]=Json(it.date);
-j[“category”]=Json(it.category); j[“content”]=Json(it.content);
-return j;
+    Json j=Json::object();
+    j["id"]=Json(it.id); j["title"]=Json(it.title); j["date"]=Json(it.date);
+    j["category"]=Json(it.category); j["content"]=Json(it.content);
+    return j;
 }
 static Json toJ(const Event& e){
-Json j=Json::object();
-j[“id”]=Json(e.id); j[“name”]=Json(e.name); j[“date”]=Json(e.date); j[“time”]=Json(e.time_);
-j[“description”]=Json(e.description); j[“location”]=Json(e.location);
-j[“maxParticipants”]=Json((long long)e.maxParticipants); j[“createdAt”]=Json(e.createdAt);
-Json jp=Json::array(); for(auto& p:e.participants) jp.push(Json(p));
-j[“participants”]=jp;
-return j;
+    Json j=Json::object();
+    j["id"]=Json(e.id); j["name"]=Json(e.name); j["date"]=Json(e.date); j["time"]=Json(e.time_);
+    j["description"]=Json(e.description); j["location"]=Json(e.location);
+    j["maxParticipants"]=Json((long long)e.maxParticipants); j["createdAt"]=Json(e.createdAt);
+    Json jp=Json::array(); for(auto& p:e.participants) jp.push(Json(p));
+    j["participants"]=jp;
+    return j;
 }
 static Json toJ(const LaundryBk& b){
-Json j=Json::object();
-j[“id”]=Json(b.id); j[“name”]=Json(b.name); j[“room”]=Json(b.room);
-j[“userId”]=Json(b.userId); j[“machineId”]=Json(b.machineId);
-j[“date”]=Json(b.date); j[“slot”]=Json(b.slot); j[“createdAt”]=Json(b.createdAt);
-return j;
+    Json j=Json::object();
+    j["id"]=Json(b.id); j["name"]=Json(b.name); j["room"]=Json(b.room);
+    j["userId"]=Json(b.userId); j["machineId"]=Json(b.machineId);
+    j["date"]=Json(b.date); j["slot"]=Json(b.slot); j["createdAt"]=Json(b.createdAt);
+    return j;
 }
 static Json toJ(const EquipBk& b){
-Json j=Json::object();
-j[“id”]=Json(b.id); j[“name”]=Json(b.name); j[“room”]=Json(b.room);
-j[“userId”]=Json(b.userId); j[“item”]=Json(b.item); j[“date”]=Json(b.date);
-j[“startTime”]=Json(b.startTime); j[“endTime”]=Json(b.endTime);
-j[“duration”]=Json((long long)b.duration); j[“createdAt”]=Json(b.createdAt);
-return j;
+    Json j=Json::object();
+    j["id"]=Json(b.id); j["name"]=Json(b.name); j["room"]=Json(b.room);
+    j["userId"]=Json(b.userId); j["item"]=Json(b.item); j["date"]=Json(b.date);
+    j["startTime"]=Json(b.startTime); j["endTime"]=Json(b.endTime);
+    j["duration"]=Json((long long)b.duration); j["createdAt"]=Json(b.createdAt);
+    return j;
 }
 static Json toJ(const MaintReq& m){
-Json j=Json::object();
-j[“id”]=Json(m.id); j[“userId”]=Json(m.userId); j[“name”]=Json(m.name);
-j[“room”]=Json(m.room); j[“title”]=Json(m.title); j[“description”]=Json(m.description);
-j[“category”]=Json(m.category); j[“status”]=Json(m.status); j[“createdAt”]=Json(m.createdAt);
-return j;
+    Json j=Json::object();
+    j["id"]=Json(m.id); j["userId"]=Json(m.userId); j["name"]=Json(m.name);
+    j["room"]=Json(m.room); j["title"]=Json(m.title); j["description"]=Json(m.description);
+    j["category"]=Json(m.category); j["status"]=Json(m.status); j["createdAt"]=Json(m.createdAt);
+    return j;
 }
 static Json toJ(const Parcel& p){
-Json j=Json::object();
-j[“id”]=Json(p.id); j[“residentName”]=Json(p.residentName); j[“room”]=Json(p.room);
-j[“description”]=Json(p.description); j[“carrier”]=Json(p.carrier);
-j[“collected”]=Json(p.collected); j[“collectedAt”]=Json(p.collectedAt);
-j[“createdAt”]=Json(p.createdAt);
-return j;
+    Json j=Json::object();
+    j["id"]=Json(p.id); j["residentName"]=Json(p.residentName); j["room"]=Json(p.room);
+    j["description"]=Json(p.description); j["carrier"]=Json(p.carrier);
+    j["collected"]=Json(p.collected); j["collectedAt"]=Json(p.collectedAt);
+    j["createdAt"]=Json(p.createdAt);
+    return j;
 }
 static Json toJ(const Guest& g){
-Json j=Json::object();
-j[“id”]=Json(g.id); j[“userId”]=Json(g.userId); j[“residentName”]=Json(g.residentName);
-j[“room”]=Json(g.room); j[“guestName”]=Json(g.guestName);
-j[“checkIn”]=Json(g.checkIn); j[“checkOut”]=Json(g.checkOut);
-j[“active”]=Json(g.active); j[“createdAt”]=Json(g.createdAt);
-return j;
+    Json j=Json::object();
+    j["id"]=Json(g.id); j["userId"]=Json(g.userId); j["residentName"]=Json(g.residentName);
+    j["room"]=Json(g.room); j["guestName"]=Json(g.guestName);
+    j["checkIn"]=Json(g.checkIn); j["checkOut"]=Json(g.checkOut);
+    j["active"]=Json(g.active); j["createdAt"]=Json(g.createdAt);
+    return j;
 }
 static Json toJ(const LostFound& l){
-Json j=Json::object();
-j[“id”]=Json(l.id); j[“userId”]=Json(l.userId); j[“name”]=Json(l.name);
-j[“room”]=Json(l.room); j[“type”]=Json(l.type); j[“title”]=Json(l.title);
-j[“description”]=Json(l.description); j[“resolved”]=Json(l.resolved);
-j[“createdAt”]=Json(l.createdAt);
-return j;
+    Json j=Json::object();
+    j["id"]=Json(l.id); j["userId"]=Json(l.userId); j["name"]=Json(l.name);
+    j["room"]=Json(l.room); j["type"]=Json(l.type); j["title"]=Json(l.title);
+    j["description"]=Json(l.description); j["resolved"]=Json(l.resolved);
+    j["createdAt"]=Json(l.createdAt);
+    return j;
 }
 
 template<typename T>
 static Json toJArr(const std::vector<T>& v){
-Json arr=Json::array();
-for(auto& x:v) arr.push(toJ(x));
-return arr;
+    Json arr=Json::array();
+    for(auto& x:v) arr.push(toJ(x));
+    return arr;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -412,580 +405,570 @@ return arr;
 // ═══════════════════════════════════════════════════════════════════
 
 static std::string pgEsc(PGconn* c, const std::string& s){
-char* e=PQescapeLiteral(c,s.c_str(),s.size());
-if(!e) return “’’”;
-std::string r(e); PQfreemem(e); return r;
+    char* e=PQescapeLiteral(c,s.c_str(),s.size());
+    if(!e) return "''";
+    std::string r(e); PQfreemem(e); return r;
 }
 static std::string pgStr(PGresult* r,int row,int col){
-if(PQgetisnull(r,row,col)) return “”;
-return PQgetvalue(r,row,col);
+    if(PQgetisnull(r,row,col)) return "";
+    return PQgetvalue(r,row,col);
 }
 static bool pgBool(PGresult* r,int row,int col){
-auto v=pgStr(r,row,col);
-return v==“t”||v==“true”||v==“1”;
+    auto v=pgStr(r,row,col);
+    return v=="t"||v=="true"||v=="1";
 }
 
 class DB {
 public:
-std::vector<User>      users;
-std::vector<Notice>    notices;
-std::vector<NewsItem>  news;
-std::vector<Event>     events;
-std::vector<LaundryBk> laundry;
-std::vector<EquipBk>   equip;
-std::vector<MaintReq>  maintenance;
-std::vector<Parcel>    parcels;
-std::vector<Guest>     guests;
-std::vector<LostFound> lostfound;
-std::mutex             mtx;
-PGconn*                pg_=nullptr;
+    std::vector<User>      users;
+    std::vector<Notice>    notices;
+    std::vector<NewsItem>  news;
+    std::vector<Event>     events;
+    std::vector<LaundryBk> laundry;
+    std::vector<EquipBk>   equip;
+    std::vector<MaintReq>  maintenance;
+    std::vector<Parcel>    parcels;
+    std::vector<Guest>     guests;
+    std::vector<LostFound> lostfound;
+    std::mutex             mtx;
+    PGconn*                pg_=nullptr;
 
-```
-// ── find helpers ─────────────────────────────────────────────
-User*      findUser(const std::string& id)   { for(auto&u:users)   if(u.id==id)       return &u; return nullptr; }
-User*      findByUsername(const std::string& u){ for(auto&x:users) if(toLower(x.username)==toLower(u)) return &x; return nullptr; }
-User*      findByRoom(const std::string& r)  { for(auto&u:users)   if(u.role!="admin"&&toLower(u.room)==toLower(r)) return &u; return nullptr; }
-Event*     findEvent(const std::string& id)  { for(auto&e:events)  if(e.id==id)       return &e; return nullptr; }
-LaundryBk* findLaundry(const std::string& id){ for(auto&b:laundry) if(b.id==id)       return &b; return nullptr; }
-EquipBk*   findEquip(const std::string& id)  { for(auto&b:equip)   if(b.id==id)       return &b; return nullptr; }
-MaintReq*  findMaint(const std::string& id)  { for(auto&m:maintenance) if(m.id==id)   return &m; return nullptr; }
-Parcel*    findParcel(const std::string& id) { for(auto&p:parcels) if(p.id==id)       return &p; return nullptr; }
-Guest*     findGuest(const std::string& id)  { for(auto&g:guests)  if(g.id==id)       return &g; return nullptr; }
-LostFound* findLF(const std::string& id)     { for(auto&l:lostfound) if(l.id==id)     return &l; return nullptr; }
+    // ── find helpers ─────────────────────────────────────────────
+    User*      findUser(const std::string& id)   { for(auto&u:users)   if(u.id==id)       return &u; return nullptr; }
+    User*      findByUsername(const std::string& u){ for(auto&x:users) if(toLower(x.username)==toLower(u)) return &x; return nullptr; }
+    User*      findByRoom(const std::string& r)  { for(auto&u:users)   if(u.role!="admin"&&toLower(u.room)==toLower(r)) return &u; return nullptr; }
+    Event*     findEvent(const std::string& id)  { for(auto&e:events)  if(e.id==id)       return &e; return nullptr; }
+    LaundryBk* findLaundry(const std::string& id){ for(auto&b:laundry) if(b.id==id)       return &b; return nullptr; }
+    EquipBk*   findEquip(const std::string& id)  { for(auto&b:equip)   if(b.id==id)       return &b; return nullptr; }
+    MaintReq*  findMaint(const std::string& id)  { for(auto&m:maintenance) if(m.id==id)   return &m; return nullptr; }
+    Parcel*    findParcel(const std::string& id) { for(auto&p:parcels) if(p.id==id)       return &p; return nullptr; }
+    Guest*     findGuest(const std::string& id)  { for(auto&g:guests)  if(g.id==id)       return &g; return nullptr; }
+    LostFound* findLF(const std::string& id)     { for(auto&l:lostfound) if(l.id==id)     return &l; return nullptr; }
 
-// ── PG exec helpers ──────────────────────────────────────────
-bool exec(const std::string& sql){
-    PGresult* r=PQexec(pg_,sql.c_str());
-    bool ok=(PQresultStatus(r)==PGRES_COMMAND_OK||PQresultStatus(r)==PGRES_TUPLES_OK);
-    if(!ok) std::cerr<<"PG error: "<<PQerrorMessage(pg_)<<"\nSQL: "<<sql.substr(0,300)<<"\n";
-    PQclear(r); return ok;
-}
-PGresult* query(const std::string& sql){
-    PGresult* r=PQexec(pg_,sql.c_str());
-    if(PQresultStatus(r)!=PGRES_TUPLES_OK)
-        std::cerr<<"PG query error: "<<PQerrorMessage(pg_)<<"\n";
-    return r;
-}
-
-// ── Schema creation ──────────────────────────────────────────
-void createSchema(){
-    exec(R"(CREATE TABLE IF NOT EXISTS users(
-        id TEXT PRIMARY KEY, name TEXT, room TEXT, username TEXT UNIQUE,
-        hash TEXT, salt TEXT, role TEXT, email TEXT, phone TEXT, created_at TEXT))");
-    exec(R"(CREATE TABLE IF NOT EXISTS notices(
-        id TEXT PRIMARY KEY, text TEXT, active BOOLEAN, urgent BOOLEAN))");
-    exec(R"(CREATE TABLE IF NOT EXISTS news(
-        id TEXT PRIMARY KEY, title TEXT, date TEXT, category TEXT, content TEXT))");
-    exec(R"(CREATE TABLE IF NOT EXISTS events(
-        id TEXT PRIMARY KEY, name TEXT, date TEXT, time_ TEXT,
-        description TEXT, location TEXT, max_participants INT,
-        participants TEXT, created_at TEXT))");
-    exec(R"(CREATE TABLE IF NOT EXISTS laundry(
-        id TEXT PRIMARY KEY, name TEXT, room TEXT, user_id TEXT,
-        machine_id TEXT, date TEXT, slot TEXT, created_at TEXT))");
-    exec(R"(CREATE TABLE IF NOT EXISTS equip(
-        id TEXT PRIMARY KEY, name TEXT, room TEXT, user_id TEXT,
-        item TEXT, date TEXT, start_time TEXT, end_time TEXT,
-        duration INT, created_at TEXT))");
-    exec(R"(CREATE TABLE IF NOT EXISTS maintenance(
-        id TEXT PRIMARY KEY, user_id TEXT, name TEXT, room TEXT,
-        title TEXT, description TEXT, category TEXT, status TEXT, created_at TEXT))");
-    exec(R"(CREATE TABLE IF NOT EXISTS parcels(
-        id TEXT PRIMARY KEY, resident_name TEXT, room TEXT, description TEXT,
-        carrier TEXT, collected BOOLEAN, collected_at TEXT, created_at TEXT))");
-    exec(R"(CREATE TABLE IF NOT EXISTS guests(
-        id TEXT PRIMARY KEY, user_id TEXT, resident_name TEXT, room TEXT,
-        guest_name TEXT, check_in TEXT, check_out TEXT, active BOOLEAN, created_at TEXT))");
-    exec(R"(CREATE TABLE IF NOT EXISTS lostfound(
-        id TEXT PRIMARY KEY, user_id TEXT, name TEXT, room TEXT,
-        type TEXT, title TEXT, description TEXT, resolved BOOLEAN, created_at TEXT))");
-}
-
-// ── Save: write entire in-memory state to PG ─────────────────
-void save(){
-    // users
-    exec("DELETE FROM users");
-    for(auto&u:users){
-        exec("INSERT INTO users VALUES("+pgEsc(pg_,u.id)+","+pgEsc(pg_,u.name)+","+
-             pgEsc(pg_,u.room)+","+pgEsc(pg_,u.username)+","+pgEsc(pg_,u.hash)+","+
-             pgEsc(pg_,u.salt)+","+pgEsc(pg_,u.role)+","+pgEsc(pg_,u.email)+","+
-             pgEsc(pg_,u.phone)+","+pgEsc(pg_,u.createdAt)+")");
+    // ── PG exec helpers ──────────────────────────────────────────
+    bool exec(const std::string& sql){
+        PGresult* r=PQexec(pg_,sql.c_str());
+        bool ok=(PQresultStatus(r)==PGRES_COMMAND_OK||PQresultStatus(r)==PGRES_TUPLES_OK);
+        if(!ok) std::cerr<<"PG error: "<<PQerrorMessage(pg_)<<"\nSQL: "<<sql.substr(0,300)<<"\n";
+        PQclear(r); return ok;
     }
-    // notices
-    exec("DELETE FROM notices");
-    for(auto&n:notices){
-        std::string act=n.active?"true":"false", urg=n.urgent?"true":"false";
-        exec("INSERT INTO notices VALUES("+pgEsc(pg_,n.id)+","+pgEsc(pg_,n.text)+","+act+","+urg+")");
+    PGresult* query(const std::string& sql){
+        PGresult* r=PQexec(pg_,sql.c_str());
+        if(PQresultStatus(r)!=PGRES_TUPLES_OK)
+            std::cerr<<"PG query error: "<<PQerrorMessage(pg_)<<"\n";
+        return r;
     }
-    // news
-    exec("DELETE FROM news");
-    for(auto&it:news){
-        exec("INSERT INTO news VALUES("+pgEsc(pg_,it.id)+","+pgEsc(pg_,it.title)+","+
-             pgEsc(pg_,it.date)+","+pgEsc(pg_,it.category)+","+pgEsc(pg_,it.content)+")");
+
+    // ── Schema creation ──────────────────────────────────────────
+    void createSchema(){
+        exec(R"(CREATE TABLE IF NOT EXISTS users(
+            id TEXT PRIMARY KEY, name TEXT, room TEXT, username TEXT UNIQUE,
+            hash TEXT, salt TEXT, role TEXT, email TEXT, phone TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS notices(
+            id TEXT PRIMARY KEY, text TEXT, active BOOLEAN, urgent BOOLEAN))");
+        exec(R"(CREATE TABLE IF NOT EXISTS news(
+            id TEXT PRIMARY KEY, title TEXT, date TEXT, category TEXT, content TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS events(
+            id TEXT PRIMARY KEY, name TEXT, date TEXT, time_ TEXT,
+            description TEXT, location TEXT, max_participants INT,
+            participants TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS laundry(
+            id TEXT PRIMARY KEY, name TEXT, room TEXT, user_id TEXT,
+            machine_id TEXT, date TEXT, slot TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS equip(
+            id TEXT PRIMARY KEY, name TEXT, room TEXT, user_id TEXT,
+            item TEXT, date TEXT, start_time TEXT, end_time TEXT,
+            duration INT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS maintenance(
+            id TEXT PRIMARY KEY, user_id TEXT, name TEXT, room TEXT,
+            title TEXT, description TEXT, category TEXT, status TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS parcels(
+            id TEXT PRIMARY KEY, resident_name TEXT, room TEXT, description TEXT,
+            carrier TEXT, collected BOOLEAN, collected_at TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS guests(
+            id TEXT PRIMARY KEY, user_id TEXT, resident_name TEXT, room TEXT,
+            guest_name TEXT, check_in TEXT, check_out TEXT, active BOOLEAN, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS lostfound(
+            id TEXT PRIMARY KEY, user_id TEXT, name TEXT, room TEXT,
+            type TEXT, title TEXT, description TEXT, resolved BOOLEAN, created_at TEXT))");
     }
-    // events — participants stored as JSON array string
-    exec("DELETE FROM events");
-    for(auto&e:events){
-        // build participants as comma-separated
-        std::string parts="";
-        for(size_t i=0;i<e.participants.size();i++){
-            if(i) parts+="|";
-            parts+=e.participants[i];
+
+    // ── Save: write entire in-memory state to PG ─────────────────
+    void save(){
+        // users
+        exec("DELETE FROM users");
+        for(auto&u:users){
+            exec("INSERT INTO users VALUES("+pgEsc(pg_,u.id)+","+pgEsc(pg_,u.name)+","+
+                 pgEsc(pg_,u.room)+","+pgEsc(pg_,u.username)+","+pgEsc(pg_,u.hash)+","+
+                 pgEsc(pg_,u.salt)+","+pgEsc(pg_,u.role)+","+pgEsc(pg_,u.email)+","+
+                 pgEsc(pg_,u.phone)+","+pgEsc(pg_,u.createdAt)+")");
         }
-        exec("INSERT INTO events VALUES("+pgEsc(pg_,e.id)+","+pgEsc(pg_,e.name)+","+
-             pgEsc(pg_,e.date)+","+pgEsc(pg_,e.time_)+","+pgEsc(pg_,e.description)+","+
-             pgEsc(pg_,e.location)+","+std::to_string(e.maxParticipants)+","+
-             pgEsc(pg_,parts)+","+pgEsc(pg_,e.createdAt)+")");
-    }
-    // laundry
-    exec("DELETE FROM laundry");
-    for(auto&b:laundry){
-        exec("INSERT INTO laundry VALUES("+pgEsc(pg_,b.id)+","+pgEsc(pg_,b.name)+","+
-             pgEsc(pg_,b.room)+","+pgEsc(pg_,b.userId)+","+pgEsc(pg_,b.machineId)+","+
-             pgEsc(pg_,b.date)+","+pgEsc(pg_,b.slot)+","+pgEsc(pg_,b.createdAt)+")");
-    }
-    // equip
-    exec("DELETE FROM equip");
-    for(auto&b:equip){
-        exec("INSERT INTO equip VALUES("+pgEsc(pg_,b.id)+","+pgEsc(pg_,b.name)+","+
-             pgEsc(pg_,b.room)+","+pgEsc(pg_,b.userId)+","+pgEsc(pg_,b.item)+","+
-             pgEsc(pg_,b.date)+","+pgEsc(pg_,b.startTime)+","+pgEsc(pg_,b.endTime)+","+
-             std::to_string(b.duration)+","+pgEsc(pg_,b.createdAt)+")");
-    }
-    // maintenance
-    exec("DELETE FROM maintenance");
-    for(auto&m:maintenance){
-        exec("INSERT INTO maintenance VALUES("+pgEsc(pg_,m.id)+","+pgEsc(pg_,m.userId)+","+
-             pgEsc(pg_,m.name)+","+pgEsc(pg_,m.room)+","+pgEsc(pg_,m.title)+","+
-             pgEsc(pg_,m.description)+","+pgEsc(pg_,m.category)+","+pgEsc(pg_,m.status)+","+
-             pgEsc(pg_,m.createdAt)+")");
-    }
-    // parcels
-    exec("DELETE FROM parcels");
-    for(auto&p:parcels){
-        std::string col=p.collected?"true":"false";
-        exec("INSERT INTO parcels VALUES("+pgEsc(pg_,p.id)+","+pgEsc(pg_,p.residentName)+","+
-             pgEsc(pg_,p.room)+","+pgEsc(pg_,p.description)+","+pgEsc(pg_,p.carrier)+","+
-             col+","+pgEsc(pg_,p.collectedAt)+","+pgEsc(pg_,p.createdAt)+")");
-    }
-    // guests
-    exec("DELETE FROM guests");
-    for(auto&g:guests){
-        std::string act=g.active?"true":"false";
-        exec("INSERT INTO guests VALUES("+pgEsc(pg_,g.id)+","+pgEsc(pg_,g.userId)+","+
-             pgEsc(pg_,g.residentName)+","+pgEsc(pg_,g.room)+","+pgEsc(pg_,g.guestName)+","+
-             pgEsc(pg_,g.checkIn)+","+pgEsc(pg_,g.checkOut)+","+act+","+pgEsc(pg_,g.createdAt)+")");
-    }
-    // lostfound
-    exec("DELETE FROM lostfound");
-    for(auto&l:lostfound){
-        std::string res=l.resolved?"true":"false";
-        exec("INSERT INTO lostfound VALUES("+pgEsc(pg_,l.id)+","+pgEsc(pg_,l.userId)+","+
-             pgEsc(pg_,l.name)+","+pgEsc(pg_,l.room)+","+pgEsc(pg_,l.type)+","+
-             pgEsc(pg_,l.title)+","+pgEsc(pg_,l.description)+","+res+","+pgEsc(pg_,l.createdAt)+")");
-    }
-}
-
-// ── Load: read from PG into memory ───────────────────────────
-void load(const std::string& dbUrl){
-    pg_=PQconnectdb(dbUrl.c_str());
-    if(PQstatus(pg_)!=CONNECTION_OK){
-        std::cerr<<"PG connect failed: "<<PQerrorMessage(pg_)<<"\n";
-        std::cerr<<"Falling back to in-memory (data won't persist)\n";
-        pg_=nullptr; seed(); return;
-    }
-    std::cout<<"  PostgreSQL connected\n";
-    createSchema();
-
-    // users
-    {auto* r=query("SELECT id,name,room,username,hash,salt,role,email,phone,created_at FROM users");
-    for(int i=0;i<PQntuples(r);i++){
-        User u; u.id=pgStr(r,i,0); u.name=pgStr(r,i,1); u.room=pgStr(r,i,2);
-        u.username=pgStr(r,i,3); u.hash=pgStr(r,i,4); u.salt=pgStr(r,i,5);
-        u.role=pgStr(r,i,6); u.email=pgStr(r,i,7); u.phone=pgStr(r,i,8);
-        u.createdAt=pgStr(r,i,9);
-        users.push_back(u);
-    } PQclear(r);}
-
-    // notices
-    {auto* r=query("SELECT id,text,active,urgent FROM notices");
-    for(int i=0;i<PQntuples(r);i++){
-        Notice n; n.id=pgStr(r,i,0); n.text=pgStr(r,i,1);
-        n.active=pgBool(r,i,2); n.urgent=pgBool(r,i,3);
-        notices.push_back(n);
-    } PQclear(r);}
-
-    // news
-    {auto* r=query("SELECT id,title,date,category,content FROM news ORDER BY date DESC");
-    for(int i=0;i<PQntuples(r);i++){
-        NewsItem it; it.id=pgStr(r,i,0); it.title=pgStr(r,i,1);
-        it.date=pgStr(r,i,2); it.category=pgStr(r,i,3); it.content=pgStr(r,i,4);
-        news.push_back(it);
-    } PQclear(r);}
-
-    // events
-    {auto* r=query("SELECT id,name,date,time_,description,location,max_participants,participants,created_at FROM events ORDER BY date");
-    for(int i=0;i<PQntuples(r);i++){
-        Event e; e.id=pgStr(r,i,0); e.name=pgStr(r,i,1); e.date=pgStr(r,i,2);
-        e.time_=pgStr(r,i,3); e.description=pgStr(r,i,4); e.location=pgStr(r,i,5);
-        e.maxParticipants=std::stoi(pgStr(r,i,6).empty()?"20":pgStr(r,i,6));
-        std::string parts=pgStr(r,i,7);
-        if(!parts.empty()){
-            std::istringstream ss(parts); std::string p;
-            while(std::getline(ss,p,'|')) if(!p.empty()) e.participants.push_back(p);
+        // notices
+        exec("DELETE FROM notices");
+        for(auto&n:notices){
+            std::string act=n.active?"true":"false", urg=n.urgent?"true":"false";
+            exec("INSERT INTO notices VALUES("+pgEsc(pg_,n.id)+","+pgEsc(pg_,n.text)+","+act+","+urg+")");
         }
-        e.createdAt=pgStr(r,i,8);
-        events.push_back(e);
-    } PQclear(r);}
+        // news
+        exec("DELETE FROM news");
+        for(auto&it:news){
+            exec("INSERT INTO news VALUES("+pgEsc(pg_,it.id)+","+pgEsc(pg_,it.title)+","+
+                 pgEsc(pg_,it.date)+","+pgEsc(pg_,it.category)+","+pgEsc(pg_,it.content)+")");
+        }
+        // events — participants stored as JSON array string
+        exec("DELETE FROM events");
+        for(auto&e:events){
+            // build participants as comma-separated
+            std::string parts="";
+            for(size_t i=0;i<e.participants.size();i++){
+                if(i) parts+="|";
+                parts+=e.participants[i];
+            }
+            exec("INSERT INTO events VALUES("+pgEsc(pg_,e.id)+","+pgEsc(pg_,e.name)+","+
+                 pgEsc(pg_,e.date)+","+pgEsc(pg_,e.time_)+","+pgEsc(pg_,e.description)+","+
+                 pgEsc(pg_,e.location)+","+std::to_string(e.maxParticipants)+","+
+                 pgEsc(pg_,parts)+","+pgEsc(pg_,e.createdAt)+")");
+        }
+        // laundry
+        exec("DELETE FROM laundry");
+        for(auto&b:laundry){
+            exec("INSERT INTO laundry VALUES("+pgEsc(pg_,b.id)+","+pgEsc(pg_,b.name)+","+
+                 pgEsc(pg_,b.room)+","+pgEsc(pg_,b.userId)+","+pgEsc(pg_,b.machineId)+","+
+                 pgEsc(pg_,b.date)+","+pgEsc(pg_,b.slot)+","+pgEsc(pg_,b.createdAt)+")");
+        }
+        // equip
+        exec("DELETE FROM equip");
+        for(auto&b:equip){
+            exec("INSERT INTO equip VALUES("+pgEsc(pg_,b.id)+","+pgEsc(pg_,b.name)+","+
+                 pgEsc(pg_,b.room)+","+pgEsc(pg_,b.userId)+","+pgEsc(pg_,b.item)+","+
+                 pgEsc(pg_,b.date)+","+pgEsc(pg_,b.startTime)+","+pgEsc(pg_,b.endTime)+","+
+                 std::to_string(b.duration)+","+pgEsc(pg_,b.createdAt)+")");
+        }
+        // maintenance
+        exec("DELETE FROM maintenance");
+        for(auto&m:maintenance){
+            exec("INSERT INTO maintenance VALUES("+pgEsc(pg_,m.id)+","+pgEsc(pg_,m.userId)+","+
+                 pgEsc(pg_,m.name)+","+pgEsc(pg_,m.room)+","+pgEsc(pg_,m.title)+","+
+                 pgEsc(pg_,m.description)+","+pgEsc(pg_,m.category)+","+pgEsc(pg_,m.status)+","+
+                 pgEsc(pg_,m.createdAt)+")");
+        }
+        // parcels
+        exec("DELETE FROM parcels");
+        for(auto&p:parcels){
+            std::string col=p.collected?"true":"false";
+            exec("INSERT INTO parcels VALUES("+pgEsc(pg_,p.id)+","+pgEsc(pg_,p.residentName)+","+
+                 pgEsc(pg_,p.room)+","+pgEsc(pg_,p.description)+","+pgEsc(pg_,p.carrier)+","+
+                 col+","+pgEsc(pg_,p.collectedAt)+","+pgEsc(pg_,p.createdAt)+")");
+        }
+        // guests
+        exec("DELETE FROM guests");
+        for(auto&g:guests){
+            std::string act=g.active?"true":"false";
+            exec("INSERT INTO guests VALUES("+pgEsc(pg_,g.id)+","+pgEsc(pg_,g.userId)+","+
+                 pgEsc(pg_,g.residentName)+","+pgEsc(pg_,g.room)+","+pgEsc(pg_,g.guestName)+","+
+                 pgEsc(pg_,g.checkIn)+","+pgEsc(pg_,g.checkOut)+","+act+","+pgEsc(pg_,g.createdAt)+")");
+        }
+        // lostfound
+        exec("DELETE FROM lostfound");
+        for(auto&l:lostfound){
+            std::string res=l.resolved?"true":"false";
+            exec("INSERT INTO lostfound VALUES("+pgEsc(pg_,l.id)+","+pgEsc(pg_,l.userId)+","+
+                 pgEsc(pg_,l.name)+","+pgEsc(pg_,l.room)+","+pgEsc(pg_,l.type)+","+
+                 pgEsc(pg_,l.title)+","+pgEsc(pg_,l.description)+","+res+","+pgEsc(pg_,l.createdAt)+")");
+        }
+    }
 
-    // laundry
-    {auto* r=query("SELECT id,name,room,user_id,machine_id,date,slot,created_at FROM laundry");
-    for(int i=0;i<PQntuples(r);i++){
-        LaundryBk b; b.id=pgStr(r,i,0); b.name=pgStr(r,i,1); b.room=pgStr(r,i,2);
-        b.userId=pgStr(r,i,3); b.machineId=pgStr(r,i,4);
-        b.date=pgStr(r,i,5); b.slot=pgStr(r,i,6); b.createdAt=pgStr(r,i,7);
-        laundry.push_back(b);
-    } PQclear(r);}
+    // ── Load: read from PG into memory ───────────────────────────
+    void load(const std::string& dbUrl){
+        pg_=PQconnectdb(dbUrl.c_str());
+        if(PQstatus(pg_)!=CONNECTION_OK){
+            std::cerr<<"PG connect failed: "<<PQerrorMessage(pg_)<<"\n";
+            std::cerr<<"Falling back to in-memory (data won't persist)\n";
+            pg_=nullptr; seed(); return;
+        }
+        std::cout<<"  PostgreSQL connected\n";
+        createSchema();
 
-    // equip
-    {auto* r=query("SELECT id,name,room,user_id,item,date,start_time,end_time,duration,created_at FROM equip");
-    for(int i=0;i<PQntuples(r);i++){
-        EquipBk b; b.id=pgStr(r,i,0); b.name=pgStr(r,i,1); b.room=pgStr(r,i,2);
-        b.userId=pgStr(r,i,3); b.item=pgStr(r,i,4); b.date=pgStr(r,i,5);
-        b.startTime=pgStr(r,i,6); b.endTime=pgStr(r,i,7);
-        b.duration=std::stoi(pgStr(r,i,8).empty()?"60":pgStr(r,i,8));
-        b.createdAt=pgStr(r,i,9);
-        equip.push_back(b);
-    } PQclear(r);}
+        // users
+        {auto* r=query("SELECT id,name,room,username,hash,salt,role,email,phone,created_at FROM users");
+        for(int i=0;i<PQntuples(r);i++){
+            User u; u.id=pgStr(r,i,0); u.name=pgStr(r,i,1); u.room=pgStr(r,i,2);
+            u.username=pgStr(r,i,3); u.hash=pgStr(r,i,4); u.salt=pgStr(r,i,5);
+            u.role=pgStr(r,i,6); u.email=pgStr(r,i,7); u.phone=pgStr(r,i,8);
+            u.createdAt=pgStr(r,i,9);
+            users.push_back(u);
+        } PQclear(r);}
 
-    // maintenance
-    {auto* r=query("SELECT id,user_id,name,room,title,description,category,status,created_at FROM maintenance ORDER BY created_at DESC");
-    for(int i=0;i<PQntuples(r);i++){
-        MaintReq m; m.id=pgStr(r,i,0); m.userId=pgStr(r,i,1); m.name=pgStr(r,i,2);
-        m.room=pgStr(r,i,3); m.title=pgStr(r,i,4); m.description=pgStr(r,i,5);
-        m.category=pgStr(r,i,6); m.status=pgStr(r,i,7); m.createdAt=pgStr(r,i,8);
-        maintenance.push_back(m);
-    } PQclear(r);}
+        // notices
+        {auto* r=query("SELECT id,text,active,urgent FROM notices");
+        for(int i=0;i<PQntuples(r);i++){
+            Notice n; n.id=pgStr(r,i,0); n.text=pgStr(r,i,1);
+            n.active=pgBool(r,i,2); n.urgent=pgBool(r,i,3);
+            notices.push_back(n);
+        } PQclear(r);}
 
-    // parcels
-    {auto* r=query("SELECT id,resident_name,room,description,carrier,collected,collected_at,created_at FROM parcels ORDER BY created_at DESC");
-    for(int i=0;i<PQntuples(r);i++){
-        Parcel p; p.id=pgStr(r,i,0); p.residentName=pgStr(r,i,1); p.room=pgStr(r,i,2);
-        p.description=pgStr(r,i,3); p.carrier=pgStr(r,i,4);
-        p.collected=pgBool(r,i,5); p.collectedAt=pgStr(r,i,6); p.createdAt=pgStr(r,i,7);
-        parcels.push_back(p);
-    } PQclear(r);}
+        // news
+        {auto* r=query("SELECT id,title,date,category,content FROM news ORDER BY date DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            NewsItem it; it.id=pgStr(r,i,0); it.title=pgStr(r,i,1);
+            it.date=pgStr(r,i,2); it.category=pgStr(r,i,3); it.content=pgStr(r,i,4);
+            news.push_back(it);
+        } PQclear(r);}
 
-    // guests
-    {auto* r=query("SELECT id,user_id,resident_name,room,guest_name,check_in,check_out,active,created_at FROM guests ORDER BY created_at DESC");
-    for(int i=0;i<PQntuples(r);i++){
-        Guest g; g.id=pgStr(r,i,0); g.userId=pgStr(r,i,1); g.residentName=pgStr(r,i,2);
-        g.room=pgStr(r,i,3); g.guestName=pgStr(r,i,4); g.checkIn=pgStr(r,i,5);
-        g.checkOut=pgStr(r,i,6); g.active=pgBool(r,i,7); g.createdAt=pgStr(r,i,8);
-        guests.push_back(g);
-    } PQclear(r);}
+        // events
+        {auto* r=query("SELECT id,name,date,time_,description,location,max_participants,participants,created_at FROM events ORDER BY date");
+        for(int i=0;i<PQntuples(r);i++){
+            Event e; e.id=pgStr(r,i,0); e.name=pgStr(r,i,1); e.date=pgStr(r,i,2);
+            e.time_=pgStr(r,i,3); e.description=pgStr(r,i,4); e.location=pgStr(r,i,5);
+            e.maxParticipants=std::stoi(pgStr(r,i,6).empty()?"20":pgStr(r,i,6));
+            std::string parts=pgStr(r,i,7);
+            if(!parts.empty()){
+                std::istringstream ss(parts); std::string p;
+                while(std::getline(ss,p,'|')) if(!p.empty()) e.participants.push_back(p);
+            }
+            e.createdAt=pgStr(r,i,8);
+            events.push_back(e);
+        } PQclear(r);}
 
-    // lostfound
-    {auto* r=query("SELECT id,user_id,name,room,type,title,description,resolved,created_at FROM lostfound ORDER BY created_at DESC");
-    for(int i=0;i<PQntuples(r);i++){
-        LostFound l; l.id=pgStr(r,i,0); l.userId=pgStr(r,i,1); l.name=pgStr(r,i,2);
-        l.room=pgStr(r,i,3); l.type=pgStr(r,i,4); l.title=pgStr(r,i,5);
-        l.description=pgStr(r,i,6); l.resolved=pgBool(r,i,7); l.createdAt=pgStr(r,i,8);
-        lostfound.push_back(l);
-    } PQclear(r);}
+        // laundry
+        {auto* r=query("SELECT id,name,room,user_id,machine_id,date,slot,created_at FROM laundry");
+        for(int i=0;i<PQntuples(r);i++){
+            LaundryBk b; b.id=pgStr(r,i,0); b.name=pgStr(r,i,1); b.room=pgStr(r,i,2);
+            b.userId=pgStr(r,i,3); b.machineId=pgStr(r,i,4);
+            b.date=pgStr(r,i,5); b.slot=pgStr(r,i,6); b.createdAt=pgStr(r,i,7);
+            laundry.push_back(b);
+        } PQclear(r);}
 
-    ensureAdmin();
-    std::cout<<"  Loaded "<<users.size()<<" users, "<<news.size()
-             <<" news, "<<events.size()<<" events\n";
-}
+        // equip
+        {auto* r=query("SELECT id,name,room,user_id,item,date,start_time,end_time,duration,created_at FROM equip");
+        for(int i=0;i<PQntuples(r);i++){
+            EquipBk b; b.id=pgStr(r,i,0); b.name=pgStr(r,i,1); b.room=pgStr(r,i,2);
+            b.userId=pgStr(r,i,3); b.item=pgStr(r,i,4); b.date=pgStr(r,i,5);
+            b.startTime=pgStr(r,i,6); b.endTime=pgStr(r,i,7);
+            b.duration=std::stoi(pgStr(r,i,8).empty()?"60":pgStr(r,i,8));
+            b.createdAt=pgStr(r,i,9);
+            equip.push_back(b);
+        } PQclear(r);}
 
-void ensureAdmin(){
-    if(findByUsername("admin")) return;
-    User u; u.id=makeUID(); u.name="Management"; u.room="Admin"; u.username="admin";
-    u.salt=randomHex(16); u.hash=hashPw("admin123",u.salt); u.role="admin"; u.createdAt=nowISO();
-    users.push_back(u); save();
-    std::cout<<"  Admin created  username=admin  password=admin123\n";
-}
+        // maintenance
+        {auto* r=query("SELECT id,user_id,name,room,title,description,category,status,created_at FROM maintenance ORDER BY created_at DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            MaintReq m; m.id=pgStr(r,i,0); m.userId=pgStr(r,i,1); m.name=pgStr(r,i,2);
+            m.room=pgStr(r,i,3); m.title=pgStr(r,i,4); m.description=pgStr(r,i,5);
+            m.category=pgStr(r,i,6); m.status=pgStr(r,i,7); m.createdAt=pgStr(r,i,8);
+            maintenance.push_back(m);
+        } PQclear(r);}
 
-void seed(){
-    ensureAdmin();
-    auto td=todayStr();
-    notices.push_back({makeUID(),"Welcome to the Residence Portal — news, events, and bookings in one place.",true,false});
-    notices.push_back({makeUID(),"The vacuum cleaner is currently missing. Please report if found.",true,true});
+        // parcels
+        {auto* r=query("SELECT id,resident_name,room,description,carrier,collected,collected_at,created_at FROM parcels ORDER BY created_at DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            Parcel p; p.id=pgStr(r,i,0); p.residentName=pgStr(r,i,1); p.room=pgStr(r,i,2);
+            p.description=pgStr(r,i,3); p.carrier=pgStr(r,i,4);
+            p.collected=pgBool(r,i,5); p.collectedAt=pgStr(r,i,6); p.createdAt=pgStr(r,i,7);
+            parcels.push_back(p);
+        } PQclear(r);}
 
-    auto addN=[&](auto t,auto d,auto c,auto ct){ NewsItem it; it.id=makeUID(); it.title=t; it.date=d; it.category=c; it.content=ct; news.push_back(it); };
-    addN("New Freezer Coming Soon",            td,"Kitchen",     "A third freezer is expected to arrive soon. More details will be shared once a delivery date is confirmed.");
-    addN("Kitchen Lockers Installation",       td,"Kitchen",     "Lockers for the kitchen are expected soon, providing dedicated storage for each resident's supplies.");
-    addN("Shelf & Drawer Allocation — Action Required",td,"Kitchen","Drawers and shelves are available inside the kitchen and in the lounge. Residents must identify their desired space and contact Mostafa to reserve it.");
-    addN("Fridge Shelf System Now Active",     td,"Kitchen",     "Identified shelves inside the fridge are now in operation. All residents must keep their designated shelf clean at all times.");
-    addN("Laundry Room Whiteboard Coming",     td,"Laundry",     "A whiteboard will be installed to improve communication. Residents will write their Name, Room Number, and Machine ID to track usage.");
-    addN("10-Minute Rule Reminder",            td,"Laundry",     "The laundry room 10-minute rule remains in effect. If laundry sits in a machine for more than 10 minutes after the cycle ends, another resident may move it.");
-    addN("Vacuum Cleaner Missing",             td,"Maintenance", "The shared vacuum is currently unaccounted for. If you have it or know its location, please return it or inform management immediately.");
-    addN("Vacuum Usage Policy",                td,"Maintenance", "Vacuum use is limited to a maximum of 1 hour per day per resident. A booking system will be implemented shortly.");
-    addN("Report Maintenance Issues",          td,"Maintenance", "Residents should report all maintenance issues promptly — broken lights, missing hangers, or any damage to shared spaces.");
-    addN("Community Events Recap",             dateOffset(-14),"General","Previous community events had a strong positive impact. More events are being planned and will be announced soon.");
+        // guests
+        {auto* r=query("SELECT id,user_id,resident_name,room,guest_name,check_in,check_out,active,created_at FROM guests ORDER BY created_at DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            Guest g; g.id=pgStr(r,i,0); g.userId=pgStr(r,i,1); g.residentName=pgStr(r,i,2);
+            g.room=pgStr(r,i,3); g.guestName=pgStr(r,i,4); g.checkIn=pgStr(r,i,5);
+            g.checkOut=pgStr(r,i,6); g.active=pgBool(r,i,7); g.createdAt=pgStr(r,i,8);
+            guests.push_back(g);
+        } PQclear(r);}
 
-    auto addE=[&](auto nm,auto dt,auto tm,auto desc,auto loc,int mx,std::vector<std::string> parts={}){
-        Event e; e.id=makeUID(); e.name=nm; e.date=dt; e.time_=tm; e.description=desc;
-        e.location=loc; e.maxParticipants=mx; e.participants=parts; e.createdAt=td;
-        events.push_back(e);
-    };
-    addE("Community Game Night",   dateOffset(7), "19:00","Join your neighbours for board games and card games. All skill levels welcome!","Lounge Area",15);
-    addE("Shared Cooking Evening", dateOffset(14),"18:30","We cook together, we eat together. This month: Mediterranean food.","Kitchen",10);
-    addE("Building Welcome Gathering",dateOffset(-7),"18:00","The first official welcome gathering for all current residents.","Lounge Area",20,{"Room 101","Room 102","Room 103","Room 104","Room 105"});
+        // lostfound
+        {auto* r=query("SELECT id,user_id,name,room,type,title,description,resolved,created_at FROM lostfound ORDER BY created_at DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            LostFound l; l.id=pgStr(r,i,0); l.userId=pgStr(r,i,1); l.name=pgStr(r,i,2);
+            l.room=pgStr(r,i,3); l.type=pgStr(r,i,4); l.title=pgStr(r,i,5);
+            l.description=pgStr(r,i,6); l.resolved=pgBool(r,i,7); l.createdAt=pgStr(r,i,8);
+            lostfound.push_back(l);
+        } PQclear(r);}
 
-    if(pg_) save();
-}
-```
+        ensureAdmin();
+        std::cout<<"  Loaded "<<users.size()<<" users, "<<news.size()
+                 <<" news, "<<events.size()<<" events\n";
+    }
 
+    void ensureAdmin(){
+        if(findByUsername("admin")) return;
+        User u; u.id=makeUID(); u.name="Management"; u.room="Admin"; u.username="admin";
+        u.salt=randomHex(16); u.hash=hashPw("admin123",u.salt); u.role="admin"; u.createdAt=nowISO();
+        users.push_back(u); save();
+        std::cout<<"  Admin created  username=admin  password=admin123\n";
+    }
+
+    void seed(){
+        ensureAdmin();
+        auto td=todayStr();
+        notices.push_back({makeUID(),"Welcome to the Residence Portal — news, events, and bookings in one place.",true,false});
+        notices.push_back({makeUID(),"The vacuum cleaner is currently missing. Please report if found.",true,true});
+
+        auto addN=[&](auto t,auto d,auto c,auto ct){ NewsItem it; it.id=makeUID(); it.title=t; it.date=d; it.category=c; it.content=ct; news.push_back(it); };
+        addN("New Freezer Coming Soon",            td,"Kitchen",     "A third freezer is expected to arrive soon. More details will be shared once a delivery date is confirmed.");
+        addN("Kitchen Lockers Installation",       td,"Kitchen",     "Lockers for the kitchen are expected soon, providing dedicated storage for each resident's supplies.");
+        addN("Shelf & Drawer Allocation — Action Required",td,"Kitchen","Drawers and shelves are available inside the kitchen and in the lounge. Residents must identify their desired space and contact Mostafa to reserve it.");
+        addN("Fridge Shelf System Now Active",     td,"Kitchen",     "Identified shelves inside the fridge are now in operation. All residents must keep their designated shelf clean at all times.");
+        addN("Laundry Room Whiteboard Coming",     td,"Laundry",     "A whiteboard will be installed to improve communication. Residents will write their Name, Room Number, and Machine ID to track usage.");
+        addN("10-Minute Rule Reminder",            td,"Laundry",     "The laundry room 10-minute rule remains in effect. If laundry sits in a machine for more than 10 minutes after the cycle ends, another resident may move it.");
+        addN("Vacuum Cleaner Missing",             td,"Maintenance", "The shared vacuum is currently unaccounted for. If you have it or know its location, please return it or inform management immediately.");
+        addN("Vacuum Usage Policy",                td,"Maintenance", "Vacuum use is limited to a maximum of 1 hour per day per resident. A booking system will be implemented shortly.");
+        addN("Report Maintenance Issues",          td,"Maintenance", "Residents should report all maintenance issues promptly — broken lights, missing hangers, or any damage to shared spaces.");
+        addN("Community Events Recap",             dateOffset(-14),"General","Previous community events had a strong positive impact. More events are being planned and will be announced soon.");
+
+        auto addE=[&](auto nm,auto dt,auto tm,auto desc,auto loc,int mx,std::vector<std::string> parts={}){
+            Event e; e.id=makeUID(); e.name=nm; e.date=dt; e.time_=tm; e.description=desc;
+            e.location=loc; e.maxParticipants=mx; e.participants=parts; e.createdAt=td;
+            events.push_back(e);
+        };
+        addE("Community Game Night",   dateOffset(7), "19:00","Join your neighbours for board games and card games. All skill levels welcome!","Lounge Area",15);
+        addE("Shared Cooking Evening", dateOffset(14),"18:30","We cook together, we eat together. This month: Mediterranean food.","Kitchen",10);
+        addE("Building Welcome Gathering",dateOffset(-7),"18:00","The first official welcome gathering for all current residents.","Lounge Area",20,{"Room 101","Room 102","Room 103","Room 104","Room 105"});
+
+        if(pg_) save();
+    }
 };
+
 
 // ═══════════════════════════════════════════════════════════════════
 //  §7  Session store
 // ═══════════════════════════════════════════════════════════════════
 class Sessions {
-struct S{ std::string uid; long long exp; };
-std::unordered_map<std::string,S> store_;
-std::mutex mtx_;
-static const long long TTL=7LL*24*3600*1000; // 7 days ms
-long long nowMs(){ return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
+    struct S{ std::string uid; long long exp; };
+    std::unordered_map<std::string,S> store_;
+    std::mutex mtx_;
+    static const long long TTL=7LL*24*3600*1000; // 7 days ms
+    long long nowMs(){ return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 public:
-std::string create(const std::string& uid){
-auto tok=randomHex(32);
-std::lock_guard<std::mutex> lk(mtx_);
-store_[tok]={uid,nowMs()+TTL};
-return tok;
-}
-std::string getUid(const std::string& tok){
-if(tok.empty()) return “”;
-std::lock_guard<std::mutex> lk(mtx_);
-auto it=store_.find(tok);
-if(it==store_.end()) return “”;
-if(nowMs()>it->second.exp){ store_.erase(it); return “”; }
-return it->second.uid;
-}
-void remove(const std::string& tok){
-std::lock_guard<std::mutex> lk(mtx_);
-store_.erase(tok);
-}
+    std::string create(const std::string& uid){
+        auto tok=randomHex(32);
+        std::lock_guard<std::mutex> lk(mtx_);
+        store_[tok]={uid,nowMs()+TTL};
+        return tok;
+    }
+    std::string getUid(const std::string& tok){
+        if(tok.empty()) return "";
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto it=store_.find(tok);
+        if(it==store_.end()) return "";
+        if(nowMs()>it->second.exp){ store_.erase(it); return ""; }
+        return it->second.uid;
+    }
+    void remove(const std::string& tok){
+        std::lock_guard<std::mutex> lk(mtx_);
+        store_.erase(tok);
+    }
 };
 
 // ═══════════════════════════════════════════════════════════════════
 //  §8  SSE broker  (Server-Sent Events for real-time push)
 // ═══════════════════════════════════════════════════════════════════
 class SSEBroker {
-std::set<int> fds_;
-std::mutex mtx_;
+    std::set<int> fds_;
+    std::mutex mtx_;
 public:
-void add(int fd){ std::lock_guard<std::mutex> lk(mtx_); fds_.insert(fd); }
-void remove(int fd){ std::lock_guard<std::mutex> lk(mtx_); fds_.erase(fd); }
-void broadcast(const std::string& event, const std::string& data){
-std::string msg=“event: “+event+”\ndata: “+data+”\n\n”;
-std::lock_guard<std::mutex> lk(mtx_);
-std::vector<int> dead;
-for(int fd:fds_)
-if(::send(fd,msg.c_str(),msg.size(),MSG_NOSIGNAL)<=0) dead.push_back(fd);
-for(int fd:dead) fds_.erase(fd);
-}
+    void add(int fd){ std::lock_guard<std::mutex> lk(mtx_); fds_.insert(fd); }
+    void remove(int fd){ std::lock_guard<std::mutex> lk(mtx_); fds_.erase(fd); }
+    void broadcast(const std::string& event, const std::string& data){
+        std::string msg="event: "+event+"\ndata: "+data+"\n\n";
+        std::lock_guard<std::mutex> lk(mtx_);
+        std::vector<int> dead;
+        for(int fd:fds_)
+            if(::send(fd,msg.c_str(),msg.size(),MSG_NOSIGNAL)<=0) dead.push_back(fd);
+        for(int fd:dead) fds_.erase(fd);
+    }
 };
 
 // ═══════════════════════════════════════════════════════════════════
 //  §9  HTTP layer
 // ═══════════════════════════════════════════════════════════════════
 struct Req {
-std::string method, path, body;
-std::unordered_map<std::string,std::string> headers;
-std::unordered_map<std::string,std::string> params;   // route :params
+    std::string method, path, body;
+    std::unordered_map<std::string,std::string> headers;
+    std::unordered_map<std::string,std::string> params;   // route :params
 };
 struct Res {
-int status=200;
-std::string statusText=“OK”;
-std::string body;
-std::unordered_map<std::string,std::string> headers;
+    int status=200;
+    std::string statusText="OK";
+    std::string body;
+    std::unordered_map<std::string,std::string> headers;
 
-```
-void json(const std::string& j){ headers["Content-Type"]="application/json"; body=j; }
-void html(const std::string& h){ headers["Content-Type"]="text/html; charset=utf-8"; body=h; }
+    void json(const std::string& j){ headers["Content-Type"]="application/json"; body=j; }
+    void html(const std::string& h){ headers["Content-Type"]="text/html; charset=utf-8"; body=h; }
 
-void err(int code, const std::string& msg){
-    status=code; statusText=msg;
-    headers["Content-Type"]="application/json";
-    body="{\"error\":\""+msg+"\"}";
-}
-std::string build() const {
-    std::ostringstream o;
-    o<<"HTTP/1.1 "<<status<<" "<<statusText<<"\r\n";
-    o<<"Access-Control-Allow-Origin: *\r\n";
-    o<<"Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS\r\n";
-    o<<"Access-Control-Allow-Headers: Content-Type,Authorization\r\n";
-    o<<"Connection: close\r\n";
-    for(auto&h:headers) o<<h.first<<": "<<h.second<<"\r\n";
-    o<<"Content-Length: "<<body.size()<<"\r\n\r\n"<<body;
-    return o.str();
-}
-```
-
+    void err(int code, const std::string& msg){
+        status=code; statusText=msg;
+        headers["Content-Type"]="application/json";
+        body="{\"error\":\""+msg+"\"}";
+    }
+    std::string build() const {
+        std::ostringstream o;
+        o<<"HTTP/1.1 "<<status<<" "<<statusText<<"\r\n";
+        o<<"Access-Control-Allow-Origin: *\r\n";
+        o<<"Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS\r\n";
+        o<<"Access-Control-Allow-Headers: Content-Type,Authorization\r\n";
+        o<<"Connection: close\r\n";
+        for(auto&h:headers) o<<h.first<<": "<<h.second<<"\r\n";
+        o<<"Content-Length: "<<body.size()<<"\r\n\r\n"<<body;
+        return o.str();
+    }
 };
 
 // Read the full HTTP request from a socket (handles body correctly)
 static Req readRequest(int fd){
-Req req;
-std::string raw; raw.reserve(4096);
-char buf[4096];
-// read until headers end
-while(true){
-int n=recv(fd,buf,sizeof(buf)-1,0);
-if(n<=0) break;
-buf[n]=0; raw+=buf;
-if(raw.find(”\r\n\r\n”)!=std::string::npos) break;
-}
-// parse status line
-std::istringstream ss(raw);
-std::string line, fullPath;
-std::getline(ss,line);
-if(!line.empty()&&line.back()==’\r’) line.pop_back();
-std::istringstream rl(line);
-rl>>req.method>>fullPath;
-// strip query string from path (we don’t use it server-side)
-auto qp=fullPath.find(’?’);
-req.path=(qp!=std::string::npos)?fullPath.substr(0,qp):fullPath;
-// parse headers
-while(std::getline(ss,line)){
-if(!line.empty()&&line.back()==’\r’) line.pop_back();
-if(line.empty()) break;
-auto col=line.find(’:’);
-if(col!=std::string::npos){
-auto k=toLower(line.substr(0,col));
-auto v=line.substr(col+2); // skip “: “
-req.headers[k]=v;
-}
-}
-// read body if present
-int bodyLen=0;
-auto it=req.headers.find(“content-length”);
-if(it!=req.headers.end()) try{ bodyLen=std::stoi(it->second); }catch(…){}
-if(bodyLen>0){
-// how many body bytes already in raw?
-auto bodyStart=raw.find(”\r\n\r\n”);
-if(bodyStart!=std::string::npos){
-bodyStart+=4;
-req.body=raw.substr(bodyStart);
-while((int)req.body.size()<bodyLen){
-int n=recv(fd,buf,sizeof(buf)-1,0);
-if(n<=0) break;
-buf[n]=0; req.body+=buf;
-}
-}
-}
-return req;
+    Req req;
+    std::string raw; raw.reserve(4096);
+    char buf[4096];
+    // read until headers end
+    while(true){
+        int n=recv(fd,buf,sizeof(buf)-1,0);
+        if(n<=0) break;
+        buf[n]=0; raw+=buf;
+        if(raw.find("\r\n\r\n")!=std::string::npos) break;
+    }
+    // parse status line
+    std::istringstream ss(raw);
+    std::string line, fullPath;
+    std::getline(ss,line);
+    if(!line.empty()&&line.back()=='\r') line.pop_back();
+    std::istringstream rl(line);
+    rl>>req.method>>fullPath;
+    // strip query string from path (we don't use it server-side)
+    auto qp=fullPath.find('?');
+    req.path=(qp!=std::string::npos)?fullPath.substr(0,qp):fullPath;
+    // parse headers
+    while(std::getline(ss,line)){
+        if(!line.empty()&&line.back()=='\r') line.pop_back();
+        if(line.empty()) break;
+        auto col=line.find(':');
+        if(col!=std::string::npos){
+            auto k=toLower(line.substr(0,col));
+            auto v=line.substr(col+2); // skip ": "
+            req.headers[k]=v;
+        }
+    }
+    // read body if present
+    int bodyLen=0;
+    auto it=req.headers.find("content-length");
+    if(it!=req.headers.end()) try{ bodyLen=std::stoi(it->second); }catch(...){}
+    if(bodyLen>0){
+        // how many body bytes already in raw?
+        auto bodyStart=raw.find("\r\n\r\n");
+        if(bodyStart!=std::string::npos){
+            bodyStart+=4;
+            req.body=raw.substr(bodyStart);
+            while((int)req.body.size()<bodyLen){
+                int n=recv(fd,buf,sizeof(buf)-1,0);
+                if(n<=0) break;
+                buf[n]=0; req.body+=buf;
+            }
+        }
+    }
+    return req;
 }
 
-// Route matching: /api/events/:id  →  params[“id”]
+// Route matching: /api/events/:id  →  params["id"]
 static bool matchRoute(const std::string& pattern, const std::string& path,
-std::unordered_map<std::string,std::string>& params){
-auto split=[](const std::string& s, char d){
-std::vector<std::string> v; std::istringstream ss(s); std::string t;
-while(std::getline(ss,t,d)) if(!t.empty()) v.push_back(t);
-return v;
-};
-auto pp=split(pattern,’/’), rp=split(path,’/’);
-if(pp.size()!=rp.size()) return false;
-params.clear();
-for(size_t i=0;i<pp.size();i++){
-if(pp[i][0]==’:’) params[pp[i].substr(1)]=rp[i];
-else if(pp[i]!=rp[i]) return false;
-}
-return true;
+                        std::unordered_map<std::string,std::string>& params){
+    auto split=[](const std::string& s, char d){
+        std::vector<std::string> v; std::istringstream ss(s); std::string t;
+        while(std::getline(ss,t,d)) if(!t.empty()) v.push_back(t);
+        return v;
+    };
+    auto pp=split(pattern,'/'), rp=split(path,'/');
+    if(pp.size()!=rp.size()) return false;
+    params.clear();
+    for(size_t i=0;i<pp.size();i++){
+        if(pp[i][0]==':') params[pp[i].substr(1)]=rp[i];
+        else if(pp[i]!=rp[i]) return false;
+    }
+    return true;
 }
 
 // ─── token helper ────────────────────────────────────────────────
 static std::string getToken(const Req& req){
-auto it=req.headers.find(“authorization”);
-if(it!=req.headers.end()){
-const auto& v=it->second;
-if(v.size()>7 && v.substr(0,7)==“Bearer “) return v.substr(7);
-}
-return “”;
+    auto it=req.headers.find("authorization");
+    if(it!=req.headers.end()){
+        const auto& v=it->second;
+        if(v.size()>7 && v.substr(0,7)=="Bearer ") return v.substr(7);
+    }
+    return "";
 }
 
 // ═══════════════════════════════════════════════════════════════════
 //  §10  Server
 // ═══════════════════════════════════════════════════════════════════
 struct Route{
-std::string method, pattern;
-std::function<void(const Req&,Res&)> handler;
+    std::string method, pattern;
+    std::function<void(const Req&,Res&)> handler;
 };
 
 class Server {
-int                                                               fd_=-1;
-std::atomic<bool>                                                 running_{false};
-std::vector<Route>                                                routes_;
-std::string                                                       html_;
-std::map<std::string,std::function<void(int,const Req&)>>         sse_;
+    int                                                               fd_=-1;
+    std::atomic<bool>                                                 running_{false};
+    std::vector<Route>                                                routes_;
+    std::string                                                       html_;
+    std::map<std::string,std::function<void(int,const Req&)>>         sse_;
 
-```
-void dispatch(int cfd){
-    Req req=readRequest(cfd);
-    if(req.method.empty()){ close(cfd); return; }
+    void dispatch(int cfd){
+        Req req=readRequest(cfd);
+        if(req.method.empty()){ close(cfd); return; }
 
-    // SSE upgrade?
-    if(req.method=="GET"){
-        auto sit=sse_.find(req.path);
-        if(sit!=sse_.end()){ sit->second(cfd,req); return; } // handler owns cfd
-    }
-
-    Res res;
-    if(req.method=="OPTIONS"){
-        res.status=204; res.statusText="No Content";
-    } else if(req.path=="/"||req.path=="/index.html"){
-        res.html(html_);
-    } else {
-        bool found=false;
-        for(auto& r:routes_){
-            if(r.method!=req.method) continue;
-            std::unordered_map<std::string,std::string> params;
-            if(matchRoute(r.pattern,req.path,params)){
-                const_cast<Req&>(req).params=params;
-                try{ r.handler(req,res); } catch(std::exception& e){ res.err(500,e.what()); }
-                found=true; break;
-            }
+        // SSE upgrade?
+        if(req.method=="GET"){
+            auto sit=sse_.find(req.path);
+            if(sit!=sse_.end()){ sit->second(cfd,req); return; } // handler owns cfd
         }
-        if(!found) res.err(404,"Not found");
+
+        Res res;
+        if(req.method=="OPTIONS"){
+            res.status=204; res.statusText="No Content";
+        } else if(req.path=="/"||req.path=="/index.html"){
+            res.html(html_);
+        } else {
+            bool found=false;
+            for(auto& r:routes_){
+                if(r.method!=req.method) continue;
+                std::unordered_map<std::string,std::string> params;
+                if(matchRoute(r.pattern,req.path,params)){
+                    const_cast<Req&>(req).params=params;
+                    try{ r.handler(req,res); } catch(std::exception& e){ res.err(500,e.what()); }
+                    found=true; break;
+                }
+            }
+            if(!found) res.err(404,"Not found");
+        }
+        auto out=res.build();
+        ::send(cfd,out.c_str(),out.size(),MSG_NOSIGNAL);
+        close(cfd);
     }
-    auto out=res.build();
-    ::send(cfd,out.c_str(),out.size(),MSG_NOSIGNAL);
-    close(cfd);
-}
-```
 
 public:
-void route(const std::string& m, const std::string& p, std::function<void(const Req&,Res&)> h){
-routes_.push_back({m,p,h});
-}
-void sse(const std::string& p, std::function<void(int,const Req&)> h){ sse_[p]=h; }
-void setHtml(const std::string& h){ html_=h; }
-
-```
-bool listen(int port){
-    signal(SIGPIPE,SIG_IGN);
-    fd_=socket(AF_INET,SOCK_STREAM,0);
-    if(fd_<0){ std::cerr<<"socket() failed\n"; return false; }
-    int opt=1; setsockopt(fd_,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
-    sockaddr_in addr{}; addr.sin_family=AF_INET;
-    addr.sin_addr.s_addr=INADDR_ANY; addr.sin_port=htons((uint16_t)port);
-    if(bind(fd_,(sockaddr*)&addr,sizeof(addr))<0){ std::cerr<<"bind() failed\n"; return false; }
-    if(::listen(fd_,256)<0){ std::cerr<<"listen() failed\n"; return false; }
-    running_=true;
-    while(running_){
-        sockaddr_in ca{}; socklen_t cl=sizeof(ca);
-        int cfd=accept(fd_,(sockaddr*)&ca,&cl);
-        if(cfd<0) continue;
-        std::thread([this,cfd]{ this->dispatch(cfd); }).detach();
+    void route(const std::string& m, const std::string& p, std::function<void(const Req&,Res&)> h){
+        routes_.push_back({m,p,h});
     }
-    close(fd_); return true;
-}
-```
+    void sse(const std::string& p, std::function<void(int,const Req&)> h){ sse_[p]=h; }
+    void setHtml(const std::string& h){ html_=h; }
 
+    bool listen(int port){
+        signal(SIGPIPE,SIG_IGN);
+        fd_=socket(AF_INET,SOCK_STREAM,0);
+        if(fd_<0){ std::cerr<<"socket() failed\n"; return false; }
+        int opt=1; setsockopt(fd_,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
+        sockaddr_in addr{}; addr.sin_family=AF_INET;
+        addr.sin_addr.s_addr=INADDR_ANY; addr.sin_port=htons((uint16_t)port);
+        if(bind(fd_,(sockaddr*)&addr,sizeof(addr))<0){ std::cerr<<"bind() failed\n"; return false; }
+        if(::listen(fd_,256)<0){ std::cerr<<"listen() failed\n"; return false; }
+        running_=true;
+        while(running_){
+            sockaddr_in ca{}; socklen_t cl=sizeof(ca);
+            int cfd=accept(fd_,(sockaddr*)&ca,&cl);
+            if(cfd<0) continue;
+            std::thread([this,cfd]{ this->dispatch(cfd); }).detach();
+        }
+        close(fd_); return true;
+    }
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -996,134 +979,130 @@ bool listen(int port){
 //  §11b  Resend email mailer  (HTTPS API, port 443)
 // ═══════════════════════════════════════════════════════════════════
 struct Mailer {
-std::string apiKey;
-std::string fromAddr;
-bool        enabled=false;
+    std::string apiKey;
+    std::string fromAddr;
+    bool        enabled=false;
 
-```
-void init(){
-    const char* k=std::getenv("RESEND_API_KEY");
-    const char* f=std::getenv("RESEND_FROM"); // optional custom from address
-    if(k&&strlen(k)>0){
-        apiKey=k;
-        fromAddr=f&&strlen(f)>0 ? std::string(f) : "Residence Portal <onboarding@resend.dev>";
-        enabled=true;
-        std::cout<<"  Email: Resend enabled (from: "<<fromAddr<<")\n";
-    } else {
-        std::cout<<"  Email: disabled (set RESEND_API_KEY to enable)\n";
-    }
-}
-
-// Send via Resend HTTPS API using OpenSSL BIO
-bool send(const std::string& toAddr, const std::string& toName,
-          const std::string& subject, const std::string& bodyText){
-    if(!enabled||toAddr.empty()) return false;
-    try{
-        // Build JSON payload
-        std::string payload=
-            "{\"from\":\""+fromAddr+"\","
-            "\"to\":[\""+toAddr+"\"],"
-            "\"subject\":\""+subject+"\","
-            "\"text\":\""+[&](){
-                std::string s;
-                for(char c:bodyText){
-                    if(c=='"') s+="\\\"";
-                    else if(c=='\\') s+="\\\\";
-                    else if(c=='\n') s+="\\n";
-                    else if(c=='\r') s+="\\r";
-                    else s+=c;
-                }
-                return s;
-            }()+"\"}";
-
-        // Build HTTP request
-        std::string httpReq=
-            "POST /emails HTTP/1.1\r\n"
-            "Host: api.resend.com\r\n"
-            "Authorization: Bearer "+apiKey+"\r\n"
-            "Content-Type: application/json\r\n"
-            "Content-Length: "+std::to_string(payload.size())+"\r\n"
-            "Connection: close\r\n"
-            "\r\n"+payload;
-
-        // Connect via SSL
-        SSL_CTX* ctx=SSL_CTX_new(TLS_client_method());
-        if(!ctx){ std::cerr<<"  Resend: SSL_CTX_new failed\n"; return false; }
-        SSL_CTX_set_verify(ctx,SSL_VERIFY_NONE,nullptr);
-
-        BIO* bio=BIO_new_ssl_connect(ctx);
-        if(!bio){ SSL_CTX_free(ctx); std::cerr<<"  Resend: BIO create failed\n"; return false; }
-
-        BIO_set_conn_hostname(bio,"api.resend.com:443");
-        SSL* ssl=nullptr;
-        BIO_get_ssl(bio,&ssl);
-        if(ssl) SSL_set_tlsext_host_name(ssl,"api.resend.com");
-
-        if(BIO_do_connect(bio)<=0){
-            std::cerr<<"  Resend: connect to api.resend.com:443 failed\n";
-            BIO_free_all(bio); SSL_CTX_free(ctx); return false;
-        }
-        if(BIO_do_handshake(bio)<=0){
-            std::cerr<<"  Resend: TLS handshake failed\n";
-            BIO_free_all(bio); SSL_CTX_free(ctx); return false;
-        }
-
-        // Send request
-        BIO_write(bio,httpReq.c_str(),(int)httpReq.size());
-
-        // Read response
-        std::string resp; char buf[4096]={};
-        int n;
-        while((n=BIO_read(bio,buf,sizeof(buf)-1))>0){
-            buf[n]=0; resp+=buf;
-        }
-        BIO_free_all(bio); SSL_CTX_free(ctx);
-
-        // Check HTTP status
-        bool ok=resp.find("200 OK")!=std::string::npos||resp.find("201")!=std::string::npos;
-        if(ok){
-            std::cout<<"  Resend: email sent OK to "<<toAddr<<"\n";
+    void init(){
+        const char* k=std::getenv("RESEND_API_KEY");
+        const char* f=std::getenv("RESEND_FROM"); // optional custom from address
+        if(k&&strlen(k)>0){
+            apiKey=k;
+            fromAddr=f&&strlen(f)>0 ? std::string(f) : "Residence Portal <onboarding@resend.dev>";
+            enabled=true;
+            std::cout<<"  Email: Resend enabled (from: "<<fromAddr<<")\n";
         } else {
-            // Print first line of response for debugging
-            auto nl=resp.find('\n');
-            std::cerr<<"  Resend: send failed — "<<resp.substr(0,nl==std::string::npos?200:nl)<<"\n";
-            // Print body too
-            auto body_start=resp.find("\r\n\r\n");
-            if(body_start!=std::string::npos)
-                std::cerr<<"  Resend body: "<<resp.substr(body_start+4,300)<<"\n";
+            std::cout<<"  Email: disabled (set RESEND_API_KEY to enable)\n";
         }
-        return ok;
-    } catch(const std::exception& e){
-        std::cerr<<"  Resend exception: "<<e.what()<<"\n"; return false;
-    } catch(...){
-        std::cerr<<"  Resend: unknown error\n"; return false;
     }
-}
 
-// Send async (fire-and-forget)
-void sendAsync(const std::string& toAddr, const std::string& toName,
-               const std::string& subject, const std::string& body){
-    if(!enabled||toAddr.empty()) return;
-    std::thread([this,toAddr,toName,subject,body]{
-        send(toAddr,toName,subject,body);
-    }).detach();
-}
+    // Send via Resend HTTPS API using OpenSSL BIO
+    bool send(const std::string& toAddr, const std::string& toName,
+              const std::string& subject, const std::string& bodyText){
+        if(!enabled||toAddr.empty()) return false;
+        try{
+            // Build JSON payload
+            std::string payload=
+                "{\"from\":\""+fromAddr+"\","
+                "\"to\":[\""+toAddr+"\"],"
+                "\"subject\":\""+subject+"\","
+                "\"text\":\""+[&](){
+                    std::string s;
+                    for(char c:bodyText){
+                        if(c=='"') s+="\\\"";
+                        else if(c=='\\') s+="\\\\";
+                        else if(c=='\n') s+="\\n";
+                        else if(c=='\r') s+="\\r";
+                        else s+=c;
+                    }
+                    return s;
+                }()+"\"}";
 
-// Broadcast to all residents with email
-void broadcast(const std::vector<User>& users,
-               const std::string& subject, const std::string& body){
-    if(!enabled) return;
-    for(auto&u:users){
-        if(!u.email.empty()&&u.role!="admin")
-            sendAsync(u.email,u.name,subject,body);
+            // Build HTTP request
+            std::string httpReq=
+                "POST /emails HTTP/1.1\r\n"
+                "Host: api.resend.com\r\n"
+                "Authorization: Bearer "+apiKey+"\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: "+std::to_string(payload.size())+"\r\n"
+                "Connection: close\r\n"
+                "\r\n"+payload;
+
+            // Connect via SSL
+            SSL_CTX* ctx=SSL_CTX_new(TLS_client_method());
+            if(!ctx){ std::cerr<<"  Resend: SSL_CTX_new failed\n"; return false; }
+            SSL_CTX_set_verify(ctx,SSL_VERIFY_NONE,nullptr);
+
+            BIO* bio=BIO_new_ssl_connect(ctx);
+            if(!bio){ SSL_CTX_free(ctx); std::cerr<<"  Resend: BIO create failed\n"; return false; }
+
+            BIO_set_conn_hostname(bio,"api.resend.com:443");
+            SSL* ssl=nullptr;
+            BIO_get_ssl(bio,&ssl);
+            if(ssl) SSL_set_tlsext_host_name(ssl,"api.resend.com");
+
+            if(BIO_do_connect(bio)<=0){
+                std::cerr<<"  Resend: connect to api.resend.com:443 failed\n";
+                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
+            }
+            if(BIO_do_handshake(bio)<=0){
+                std::cerr<<"  Resend: TLS handshake failed\n";
+                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
+            }
+
+            // Send request
+            BIO_write(bio,httpReq.c_str(),(int)httpReq.size());
+
+            // Read response
+            std::string resp; char buf[4096]={};
+            int n;
+            while((n=BIO_read(bio,buf,sizeof(buf)-1))>0){
+                buf[n]=0; resp+=buf;
+            }
+            BIO_free_all(bio); SSL_CTX_free(ctx);
+
+            // Check HTTP status
+            bool ok=resp.find("200 OK")!=std::string::npos||resp.find("201")!=std::string::npos;
+            if(ok){
+                std::cout<<"  Resend: email sent OK to "<<toAddr<<"\n";
+            } else {
+                // Print first line of response for debugging
+                auto nl=resp.find('\n');
+                std::cerr<<"  Resend: send failed — "<<resp.substr(0,nl==std::string::npos?200:nl)<<"\n";
+                // Print body too
+                auto body_start=resp.find("\r\n\r\n");
+                if(body_start!=std::string::npos)
+                    std::cerr<<"  Resend body: "<<resp.substr(body_start+4,300)<<"\n";
+            }
+            return ok;
+        } catch(const std::exception& e){
+            std::cerr<<"  Resend exception: "<<e.what()<<"\n"; return false;
+        } catch(...){
+            std::cerr<<"  Resend: unknown error\n"; return false;
+        }
     }
-}
-```
 
+    // Send async (fire-and-forget)
+    void sendAsync(const std::string& toAddr, const std::string& toName,
+                   const std::string& subject, const std::string& body){
+        if(!enabled||toAddr.empty()) return;
+        std::thread([this,toAddr,toName,subject,body]{
+            send(toAddr,toName,subject,body);
+        }).detach();
+    }
+
+    // Broadcast to all residents with email
+    void broadcast(const std::vector<User>& users,
+                   const std::string& subject, const std::string& body){
+        if(!enabled) return;
+        for(auto&u:users){
+            if(!u.email.empty()&&u.role!="admin")
+                sendAsync(u.email,u.name,subject,body);
+        }
+    }
 };
 // ═══════════════════════════════════════════════════════════════════
-static const char FRONTEND[] = R”HTMLEOF(<!DOCTYPE html>
-
+static const char FRONTEND[] = R"HTMLEOF(<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1148,70 +1127,70 @@ body{background:var(--cream);color:var(--slate);font-family:var(--sans);font-siz
 
 /* ── AUTH SCREEN ─────────────────────────────────── */
 #auth-screen{
-position:fixed;inset:0;z-index:1000;
-background:linear-gradient(135deg,#1e2530 0%,var(–slate) 60%,var(–slate2) 100%);
-display:flex;align-items:center;justify-content:center;padding:20px;
+  position:fixed;inset:0;z-index:1000;
+  background:linear-gradient(135deg,#1e2530 0%,var(--slate) 60%,var(--slate2) 100%);
+  display:flex;align-items:center;justify-content:center;padding:20px;
 }
 .auth-card{
-background:var(–parchment);border:1px solid var(–border);border-radius:20px;
-padding:40px;width:100%;max-width:460px;
-box-shadow:0 32px 80px rgba(0,0,0,.4);
-animation:cardIn .45s cubic-bezier(.16,1,.3,1);
+  background:var(--parchment);border:1px solid var(--border);border-radius:20px;
+  padding:40px;width:100%;max-width:460px;
+  box-shadow:0 32px 80px rgba(0,0,0,.4);
+  animation:cardIn .45s cubic-bezier(.16,1,.3,1);
 }
 @keyframes cardIn{from{opacity:0;transform:translateY(28px) scale(.97)}to{opacity:1;transform:none}}
 .auth-logo{display:flex;align-items:center;gap:14px;margin-bottom:28px}
-.auth-logo-icon{width:48px;height:48px;background:var(–amber);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
-.auth-logo-name{font-family:var(–serif);font-size:22px;font-weight:700;color:var(–slate);line-height:1.15}
-.auth-logo-sub{font-size:12px;color:var(–muted)}
-.auth-tabs{display:flex;background:var(–cream2);border-radius:var(–r);padding:4px;gap:4px;margin-bottom:24px}
-.auth-tab{flex:1;padding:8px;border:none;border-radius:8px;background:none;font-family:var(–sans);font-size:13px;font-weight:600;color:var(–muted);cursor:pointer;transition:all .2s}
-.auth-tab.active{background:#fff;color:var(–slate);box-shadow:0 1px 6px var(–shadow)}
+.auth-logo-icon{width:48px;height:48px;background:var(--amber);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
+.auth-logo-name{font-family:var(--serif);font-size:22px;font-weight:700;color:var(--slate);line-height:1.15}
+.auth-logo-sub{font-size:12px;color:var(--muted)}
+.auth-tabs{display:flex;background:var(--cream2);border-radius:var(--r);padding:4px;gap:4px;margin-bottom:24px}
+.auth-tab{flex:1;padding:8px;border:none;border-radius:8px;background:none;font-family:var(--sans);font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;transition:all .2s}
+.auth-tab.active{background:#fff;color:var(--slate);box-shadow:0 1px 6px var(--shadow)}
 .auth-panel{display:none}
 .auth-panel.active{display:block}
-.auth-panel-title{font-family:var(–serif);font-size:22px;font-weight:700;color:var(–slate);margin-bottom:4px}
-.auth-panel-sub{font-size:13px;color:var(–muted);margin-bottom:20px}
-.auth-err{background:rgba(185,84,80,.09);border:1.5px solid rgba(185,84,80,.3);border-radius:var(–r);padding:10px 14px;font-size:13px;color:var(–red);margin-bottom:14px;display:none}
+.auth-panel-title{font-family:var(--serif);font-size:22px;font-weight:700;color:var(--slate);margin-bottom:4px}
+.auth-panel-sub{font-size:13px;color:var(--muted);margin-bottom:20px}
+.auth-err{background:rgba(185,84,80,.09);border:1.5px solid rgba(185,84,80,.3);border-radius:var(--r);padding:10px 14px;font-size:13px;color:var(--red);margin-bottom:14px;display:none}
 .auth-err.show{display:block}
-.auth-link{font-size:12px;text-align:center;color:var(–muted);margin-top:14px}
-.auth-link a{color:var(–amber);font-weight:600;text-decoration:none;cursor:pointer}
+.auth-link{font-size:12px;text-align:center;color:var(--muted);margin-top:14px}
+.auth-link a{color:var(--amber);font-weight:600;text-decoration:none;cursor:pointer}
 .auth-link a:hover{text-decoration:underline}
 
 /* ── FORMS ───────────────────────────────────────── */
 .fg{margin-bottom:14px}
-.fg label{display:block;font-size:11px;font-weight:600;color:var(–slate2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
-.fg input,.fg select,.fg textarea{width:100%;background:#fff;border:1.5px solid var(–border);border-radius:var(–r);padding:10px 13px;font-family:var(–sans);font-size:14px;color:var(–slate);outline:none;transition:border .18s,box-shadow .18s}
-.fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(–amber);box-shadow:0 0 0 3px rgba(201,128,58,.12)}
-.fg input::placeholder{color:var(–muted)}
+.fg label{display:block;font-size:11px;font-weight:600;color:var(--slate2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
+.fg input,.fg select,.fg textarea{width:100%;background:#fff;border:1.5px solid var(--border);border-radius:var(--r);padding:10px 13px;font-family:var(--sans);font-size:14px;color:var(--slate);outline:none;transition:border .18s,box-shadow .18s}
+.fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(--amber);box-shadow:0 0 0 3px rgba(201,128,58,.12)}
+.fg input::placeholder{color:var(--muted)}
 .fg textarea{min-height:82px;resize:vertical}
 .fr{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
 /* ── TOPBAR ──────────────────────────────────────── */
-#topbar{background:var(–slate);color:#fff;padding:0 24px;display:flex;align-items:center;height:58px;position:sticky;top:0;z-index:100;box-shadow:0 2px 18px var(–shadow2)}
-.brand{font-family:var(–serif);font-size:19px;font-weight:700;color:var(–amber3);margin-right:20px;display:flex;align-items:center;gap:10px;cursor:pointer;flex-shrink:0;user-select:none}
-.brand-icon{width:32px;height:32px;background:var(–amber);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
+#topbar{background:var(--slate);color:#fff;padding:0 24px;display:flex;align-items:center;height:58px;position:sticky;top:0;z-index:100;box-shadow:0 2px 18px var(--shadow2)}
+.brand{font-family:var(--serif);font-size:19px;font-weight:700;color:var(--amber3);margin-right:20px;display:flex;align-items:center;gap:10px;cursor:pointer;flex-shrink:0;user-select:none}
+.brand-icon{width:32px;height:32px;background:var(--amber);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
 #nav{display:flex;gap:2px;flex:1}
 #nav::-webkit-scrollbar{display:none}
-.nb{background:none;border:none;color:rgba(255,255,255,.6);font-family:var(–sans);font-size:13px;font-weight:500;padding:6px 14px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:all .2s}
+.nb{background:none;border:none;color:rgba(255,255,255,.6);font-family:var(--sans);font-size:13px;font-weight:500;padding:6px 14px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:all .2s}
 .nb:hover{color:#fff;background:rgba(255,255,255,.08)}
-.nb.active{color:var(–amber3);background:rgba(201,128,58,.15)}
+.nb.active{color:var(--amber3);background:rgba(201,128,58,.15)}
 /* dropdown */
 .nav-group{position:relative}
 .nav-group:hover .nav-drop,.nav-group:focus-within .nav-drop{display:block}
-.nav-drop{display:none;position:absolute;top:calc(100% + 6px);left:0;background:var(–slate2);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:6px;min-width:180px;box-shadow:0 12px 32px rgba(0,0,0,.35);z-index:200}
-.nav-drop button{display:block;width:100%;text-align:left;background:none;border:none;color:rgba(255,255,255,.75);font-family:var(–sans);font-size:13px;font-weight:500;padding:8px 12px;border-radius:7px;cursor:pointer;transition:all .15s}
+.nav-drop{display:none;position:absolute;top:calc(100% + 6px);left:0;background:var(--slate2);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:6px;min-width:180px;box-shadow:0 12px 32px rgba(0,0,0,.35);z-index:200}
+.nav-drop button{display:block;width:100%;text-align:left;background:none;border:none;color:rgba(255,255,255,.75);font-family:var(--sans);font-size:13px;font-weight:500;padding:8px 12px;border-radius:7px;cursor:pointer;transition:all .15s}
 .nav-drop button:hover{background:rgba(255,255,255,.1);color:#fff}
-.nav-drop button.active{color:var(–amber3);background:rgba(201,128,58,.15)}
+.nav-drop button.active{color:var(--amber3);background:rgba(201,128,58,.15)}
 .nb-arrow{font-size:9px;margin-left:3px;opacity:.6}
 #user-area{margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0}
 .uc{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:4px 14px 4px 6px}
-.ua{width:26px;height:26px;background:var(–amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.ua{width:26px;height:26px;background:var(--amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
 .un{color:#fff;font-size:12px;font-weight:600;line-height:1.2}
 .ur{color:rgba(255,255,255,.5);font-size:10px;line-height:1.2}
-.logout-btn{background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:rgba(255,255,255,.55);font-family:var(–sans);font-size:11px;font-weight:600;padding:5px 10px;cursor:pointer;transition:all .2s}
+.logout-btn{background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:rgba(255,255,255,.55);font-family:var(--sans);font-size:11px;font-weight:600;padding:5px 10px;cursor:pointer;transition:all .2s}
 .logout-btn:hover{background:rgba(255,255,255,.1);color:#fff}
 
 /* ── NOTICES ─────────────────────────────────────── */
-#notice-bar{background:linear-gradient(135deg,var(–amber) 0%,var(–amber2) 100%);color:#fff;display:none}
+#notice-bar{background:linear-gradient(135deg,var(--amber) 0%,var(--amber2) 100%);color:#fff;display:none}
 #notice-bar.show{display:block}
 .ni{max-width:1100px;margin:0 auto;padding:10px 24px;display:flex;gap:10px;align-items:flex-start}
 .ni-icon{font-size:15px;margin-top:2px;flex-shrink:0}
@@ -1224,224 +1203,222 @@ main{max-width:1100px;margin:0 auto;padding:32px 24px 64px;width:100%}
 .page{display:none;animation:fadeIn .3s ease}
 .page.active{display:block}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-.pt{font-family:var(–serif);font-size:32px;font-weight:700;margin-bottom:6px;letter-spacing:-.5px}
-.ps{color:var(–muted);font-size:14px;margin-bottom:28px}
-.st{font-family:var(–serif);font-size:20px;font-weight:500;color:var(–slate);margin-bottom:16px;display:flex;align-items:center;gap:10px}
-.st::after{content:’’;flex:1;height:1px;background:var(–border)}
+.pt{font-family:var(--serif);font-size:32px;font-weight:700;margin-bottom:6px;letter-spacing:-.5px}
+.ps{color:var(--muted);font-size:14px;margin-bottom:28px}
+.st{font-family:var(--serif);font-size:20px;font-weight:500;color:var(--slate);margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.st::after{content:'';flex:1;height:1px;background:var(--border)}
 
 /* ── CARDS ───────────────────────────────────────── */
-.card{background:var(–parchment);border:1px solid var(–border);border-radius:var(–r2);padding:20px 22px;box-shadow:0 2px 8px var(–shadow);transition:box-shadow .2s,transform .2s}
-.card:hover{box-shadow:0 6px 20px var(–shadow2);transform:translateY(-2px)}
+.card{background:var(--parchment);border:1px solid var(--border);border-radius:var(--r2);padding:20px 22px;box-shadow:0 2px 8px var(--shadow);transition:box-shadow .2s,transform .2s}
+.card:hover{box-shadow:0 6px 20px var(--shadow2);transform:translateY(-2px)}
 .grid{display:grid;gap:16px}
 .grid2{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
 
 /* ── BADGES ──────────────────────────────────────── */
 .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.3px;text-transform:uppercase}
-.bk{background:rgba(74,124,89,.15);color:var(–green)}
+.bk{background:rgba(74,124,89,.15);color:var(--green)}
 .bl{background:rgba(100,140,200,.15);color:#4a6fa5}
-.bm{background:rgba(185,84,80,.12);color:var(–red)}
-.bg{background:rgba(201,128,58,.15);color:var(–amber)}
-.bu{background:rgba(74,124,89,.15);color:var(–green)}
-.bp{background:rgba(120,130,148,.15);color:var(–muted)}
-.bf{background:rgba(185,84,80,.12);color:var(–red)}
+.bm{background:rgba(185,84,80,.12);color:var(--red)}
+.bg{background:rgba(201,128,58,.15);color:var(--amber)}
+.bu{background:rgba(74,124,89,.15);color:var(--green)}
+.bp{background:rgba(120,130,148,.15);color:var(--muted)}
+.bf{background:rgba(185,84,80,.12);color:var(--red)}
 
 /* ── BUTTONS ─────────────────────────────────────── */
-.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border:none;border-radius:var(–r);font-family:var(–sans);font-size:13px;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap;text-decoration:none}
-.btn-p{background:var(–amber);color:#fff}.btn-p:hover{background:var(–amber2);transform:translateY(-1px);box-shadow:0 4px 14px rgba(201,128,58,.35)}
-.btn-s{background:var(–slate);color:#fff}.btn-s:hover{background:var(–slate2);transform:translateY(-1px)}
-.btn-g{background:var(–green);color:#fff}.btn-g:hover{background:var(–green2)}
-.btn-r{background:var(–red);color:#fff}.btn-r:hover{background:var(–red2)}
-.btn-gh{background:transparent;color:var(–slate);border:1.5px solid var(–border)}.btn-gh:hover{border-color:var(–amber);color:var(–amber)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border:none;border-radius:var(--r);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap;text-decoration:none}
+.btn-p{background:var(--amber);color:#fff}.btn-p:hover{background:var(--amber2);transform:translateY(-1px);box-shadow:0 4px 14px rgba(201,128,58,.35)}
+.btn-s{background:var(--slate);color:#fff}.btn-s:hover{background:var(--slate2);transform:translateY(-1px)}
+.btn-g{background:var(--green);color:#fff}.btn-g:hover{background:var(--green2)}
+.btn-r{background:var(--red);color:#fff}.btn-r:hover{background:var(--red2)}
+.btn-gh{background:transparent;color:var(--slate);border:1.5px solid var(--border)}.btn-gh:hover{border-color:var(--amber);color:var(--amber)}
 .btn-sm{padding:6px 12px;font-size:12px}
 .btn-full{width:100%;justify-content:center}
 
 /* ── TOOLBAR ─────────────────────────────────────── */
 .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:22px;flex-wrap:wrap}
-.toolbar input,.toolbar select{background:#fff;border:1.5px solid var(–border);border-radius:var(–r);padding:8px 13px;font-family:var(–sans);font-size:13px;color:var(–slate);outline:none;transition:border .18s}
-.toolbar input:focus,.toolbar select:focus{border-color:var(–amber)}
+.toolbar input,.toolbar select{background:#fff;border:1.5px solid var(--border);border-radius:var(--r);padding:8px 13px;font-family:var(--sans);font-size:13px;color:var(--slate);outline:none;transition:border .18s}
+.toolbar input:focus,.toolbar select:focus{border-color:var(--amber)}
 .toolbar input{flex:1;min-width:180px}
-.toolbar input::placeholder{color:var(–muted)}
+.toolbar input::placeholder{color:var(--muted)}
 
 /* ── DASHBOARD ───────────────────────────────────── */
-.hero{background:linear-gradient(135deg,var(–slate) 0%,var(–slate2) 100%);color:#fff;border-radius:var(–r2);padding:36px;margin-bottom:28px;position:relative;overflow:hidden}
-.hero::before{content:’’;position:absolute;top:-40px;right:-40px;width:220px;height:220px;background:radial-gradient(circle,rgba(201,128,58,.25) 0%,transparent 70%);border-radius:50%}
-.hero-title{font-family:var(–serif);font-size:32px;font-weight:700;margin-bottom:6px;position:relative}
+.hero{background:linear-gradient(135deg,var(--slate) 0%,var(--slate2) 100%);color:#fff;border-radius:var(--r2);padding:36px;margin-bottom:28px;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;top:-40px;right:-40px;width:220px;height:220px;background:radial-gradient(circle,rgba(201,128,58,.25) 0%,transparent 70%);border-radius:50%}
+.hero-title{font-family:var(--serif);font-size:32px;font-weight:700;margin-bottom:6px;position:relative}
 .hero-sub{color:rgba(255,255,255,.65);font-size:15px;position:relative}
-.hero-date{position:absolute;top:22px;right:28px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);padding:10px 18px;border-radius:var(–r);text-align:right}
-.clock-time{font-size:26px;font-weight:700;font-family:var(–sans);color:#fff;letter-spacing:2px;line-height:1}
+.hero-date{position:absolute;top:22px;right:28px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);padding:10px 18px;border-radius:var(--r);text-align:right}
+.clock-time{font-size:26px;font-weight:700;font-family:var(--sans);color:#fff;letter-spacing:2px;line-height:1}
 .clock-date{font-size:12px;color:rgba(255,255,255,.7);margin-top:4px;letter-spacing:.3px}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:28px}
-.sc{background:var(–parchment);border:1px solid var(–border);border-radius:var(–r2);padding:18px 20px;box-shadow:0 2px 8px var(–shadow)}
-.sc-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(–muted)}
-.sc-val{font-family:var(–serif);font-size:28px;font-weight:700;color:var(–slate);margin-top:2px}
+.sc{background:var(--parchment);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px;box-shadow:0 2px 8px var(--shadow)}
+.sc-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted)}
+.sc-val{font-family:var(--serif);font-size:28px;font-weight:700;color:var(--slate);margin-top:2px}
 .dash-grid{display:grid;grid-template-columns:1fr 370px;gap:24px}
 @media(max-width:820px){.dash-grid{grid-template-columns:1fr}}
-.mini-cal{background:var(–parchment);border:1px solid var(–border);border-radius:var(–r2);padding:18px 20px;box-shadow:0 2px 8px var(–shadow);margin-bottom:24px}
+.mini-cal{background:var(--parchment);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px;box-shadow:0 2px 8px var(--shadow);margin-bottom:24px}
 .mini-cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
-.mini-cal-title{font-family:var(–serif);font-size:16px;font-weight:700;color:var(–slate)}
-.mini-cal-nav{background:none;border:1px solid var(–border);border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:14px;color:var(–muted);display:flex;align-items:center;justify-content:center;transition:all .15s}
-.mini-cal-nav:hover{background:var(–cream2);color:var(–slate)}
+.mini-cal-title{font-family:var(--serif);font-size:16px;font-weight:700;color:var(--slate)}
+.mini-cal-nav{background:none;border:1px solid var(--border);border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:all .15s}
+.mini-cal-nav:hover{background:var(--cream2);color:var(--slate)}
 .mini-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center}
-.mini-cal-dow{font-size:10px;font-weight:700;color:var(–muted);padding:3px 0;letter-spacing:.5px;text-transform:uppercase}
-.cal-day{font-size:12px;padding:5px 2px;border-radius:6px;cursor:default;color:var(–slate);line-height:1.4;position:relative}
-.cal-day.other{color:var(–border)}
-.cal-day.today{background:var(–amber);color:#fff;font-weight:700}
-.cal-day.has-event{font-weight:700;color:var(–amber)}
-.cal-day.has-event::after{content:’’;position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;background:var(–amber);border-radius:50%}
-.cal-day.today.has-event{background:var(–amber)}
+.mini-cal-dow{font-size:10px;font-weight:700;color:var(--muted);padding:3px 0;letter-spacing:.5px;text-transform:uppercase}
+.cal-day{font-size:12px;padding:5px 2px;border-radius:6px;cursor:default;color:var(--slate);line-height:1.4;position:relative}
+.cal-day.other{color:var(--border)}
+.cal-day.today{background:var(--amber);color:#fff;font-weight:700}
+.cal-day.has-event{font-weight:700;color:var(--amber)}
+.cal-day.has-event::after{content:'';position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;background:var(--amber);border-radius:50%}
+.cal-day.today.has-event{background:var(--amber)}
 .cal-day.today.has-event::after{background:#fff}
-.cal-event-list{margin-top:12px;border-top:1px solid var(–border);padding-top:10px}
-.cal-event-item{font-size:12px;padding:5px 8px;border-radius:6px;background:var(–cream2);margin-bottom:5px;display:flex;gap:8px;align-items:center;cursor:pointer}
-.cal-event-item:hover{background:var(–cream3)}
-.cal-event-dot{width:7px;height:7px;background:var(–amber);border-radius:50%;flex-shrink:0}
+.cal-event-list{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+.cal-event-item{font-size:12px;padding:5px 8px;border-radius:6px;background:var(--cream2);margin-bottom:5px;display:flex;gap:8px;align-items:center;cursor:pointer}
+.cal-event-item:hover{background:var(--cream3)}
+.cal-event-dot{width:7px;height:7px;background:var(--amber);border-radius:50%;flex-shrink:0}
 
 /* ── NEWS ────────────────────────────────────────── */
-.nc{border-left:3px solid var(–amber)}
+.nc{border-left:3px solid var(--amber)}
 .nc-meta{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-.nc-title{font-family:var(–serif);font-size:17px;font-weight:500;color:var(–slate);margin-bottom:6px;line-height:1.35}
-.nc-body{font-size:14px;color:var(–slate2);line-height:1.65}
-.nc-date{font-size:12px;color:var(–muted)}
+.nc-title{font-family:var(--serif);font-size:17px;font-weight:500;color:var(--slate);margin-bottom:6px;line-height:1.35}
+.nc-body{font-size:14px;color:var(--slate2);line-height:1.65}
+.nc-date{font-size:12px;color:var(--muted)}
 
 /* ── EVENTS ──────────────────────────────────────── */
-.ec{border-top:3px solid var(–amber)}
-.ec.past{border-top-color:var(–border);opacity:.75}
-.ec-name{font-family:var(–serif);font-size:18px;font-weight:500;color:var(–slate);margin-bottom:6px}
-.ec-meta{display:flex;flex-wrap:wrap;gap:10px;font-size:13px;color:var(–muted)}
-.ec-desc{font-size:14px;color:var(–slate2);margin:10px 0 14px;line-height:1.6}
+.ec{border-top:3px solid var(--amber)}
+.ec.past{border-top-color:var(--border);opacity:.75}
+.ec-name{font-family:var(--serif);font-size:18px;font-weight:500;color:var(--slate);margin-bottom:6px}
+.ec-meta{display:flex;flex-wrap:wrap;gap:10px;font-size:13px;color:var(--muted)}
+.ec-desc{font-size:14px;color:var(--slate2);margin:10px 0 14px;line-height:1.6}
 .ec-foot{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
-.cap-bar{width:110px;height:5px;background:var(–cream3);border-radius:3px;display:inline-block;margin-left:8px;vertical-align:middle;overflow:hidden}
-.cap-fill{height:100%;border-radius:3px;background:var(–green);transition:width .4s}
-.cap-fill.full{background:var(–red)}
-.reg-box{margin-top:14px;border-top:1px solid var(–border);padding-top:14px;display:none}
+.cap-bar{width:110px;height:5px;background:var(--cream3);border-radius:3px;display:inline-block;margin-left:8px;vertical-align:middle;overflow:hidden}
+.cap-fill{height:100%;border-radius:3px;background:var(--green);transition:width .4s}
+.cap-fill.full{background:var(--red)}
+.reg-box{margin-top:14px;border-top:1px solid var(--border);padding-top:14px;display:none}
 .reg-box.open{display:block}
 
 /* ── TABLES ──────────────────────────────────────── */
 .tw{overflow-x:auto;margin-top:8px}
 table{width:100%;border-collapse:collapse;font-size:14px}
-thead th{background:var(–slate);color:rgba(255,255,255,.8);padding:10px 14px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;white-space:nowrap}
+thead th{background:var(--slate);color:rgba(255,255,255,.8);padding:10px 14px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;white-space:nowrap}
 thead th:first-child{border-radius:8px 0 0 0}
 thead th:last-child{border-radius:0 8px 0 0}
-tbody tr{border-bottom:1px solid var(–border);transition:background .12s}
-tbody tr:hover{background:var(–cream2)}
-tbody td{padding:10px 14px;color:var(–slate2)}
-tbody td:first-child{color:var(–slate);font-weight:500}
-.tbl-empty{text-align:center;color:var(–muted);padding:32px !important;font-style:italic}
+tbody tr{border-bottom:1px solid var(--border);transition:background .12s}
+tbody tr:hover{background:var(--cream2)}
+tbody td{padding:10px 14px;color:var(--slate2)}
+tbody td:first-child{color:var(--slate);font-weight:500}
+.tbl-empty{text-align:center;color:var(--muted);padding:32px !important;font-style:italic}
 
 /* ── SLOTS ───────────────────────────────────────── */
 .slot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px}
-.slot{padding:9px 12px;border-radius:var(–r);font-size:13px;font-weight:500;text-align:center;cursor:pointer;transition:all .15s;border:1.5px solid var(–border);background:#fff;color:var(–slate)}
-.slot:hover{border-color:var(–amber);color:var(–amber)}
-.slot.taken{background:var(–cream3);color:var(–muted);cursor:not-allowed;border-style:dashed}
-.slot.sel{background:var(–amber);color:#fff;border-color:var(–amber)}
+.slot{padding:9px 12px;border-radius:var(--r);font-size:13px;font-weight:500;text-align:center;cursor:pointer;transition:all .15s;border:1.5px solid var(--border);background:#fff;color:var(--slate)}
+.slot:hover{border-color:var(--amber);color:var(--amber)}
+.slot.taken{background:var(--cream3);color:var(--muted);cursor:not-allowed;border-style:dashed}
+.slot.sel{background:var(--amber);color:#fff;border-color:var(--amber)}
 .m-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-.mt{padding:6px 16px;border:1.5px solid var(–border);border-radius:20px;background:#fff;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;color:var(–slate)}
-.mt.active{background:var(–slate);color:#fff;border-color:var(–slate)}
+.mt{padding:6px 16px;border:1.5px solid var(--border);border-radius:20px;background:#fff;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;color:var(--slate)}
+.mt.active{background:var(--slate);color:#fff;border-color:var(--slate)}
 
 /* ── ADMIN ───────────────────────────────────────── */
-.adm{background:var(–parchment);border:1px solid var(–border);border-radius:var(–r2);padding:24px;margin-bottom:20px;box-shadow:0 2px 8px var(–shadow)}
-.adm h3{font-family:var(–serif);font-size:18px;color:var(–slate);margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(–border)}
-.ar{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(–cream3);gap:12px;flex-wrap:wrap}
+.adm{background:var(--parchment);border:1px solid var(--border);border-radius:var(--r2);padding:24px;margin-bottom:20px;box-shadow:0 2px 8px var(--shadow)}
+.adm h3{font-family:var(--serif);font-size:18px;color:var(--slate);margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.ar{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--cream3);gap:12px;flex-wrap:wrap}
 .ar:last-child{border-bottom:none}
-.ar strong{font-size:14px;font-weight:600;color:var(–slate);display:block}
-.ar small{font-size:12px;color:var(–muted)}
+.ar strong{font-size:14px;font-weight:600;color:var(--slate);display:block}
+.ar small{font-size:12px;color:var(--muted)}
 
 /* ── TOAST ───────────────────────────────────────── */
 #toasts{position:fixed;bottom:22px;right:22px;z-index:999;display:flex;flex-direction:column;gap:8px}
-.toast{background:var(–slate);color:#fff;border-radius:var(–r);padding:12px 18px;font-size:13px;box-shadow:0 8px 24px rgba(44,51,65,.3);animation:tIn .28s ease;max-width:300px;display:flex;align-items:center;gap:10px;border-left:3px solid var(–amber)}
-.toast.ok{border-left-color:var(–green)}.toast.er{border-left-color:var(–red)}
+.toast{background:var(--slate);color:#fff;border-radius:var(--r);padding:12px 18px;font-size:13px;box-shadow:0 8px 24px rgba(44,51,65,.3);animation:tIn .28s ease;max-width:300px;display:flex;align-items:center;gap:10px;border-left:3px solid var(--amber)}
+.toast.ok{border-left-color:var(--green)}.toast.er{border-left-color:var(--red)}
 @keyframes tIn{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
 .pill{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:500}
-.pa{background:rgba(201,128,58,.15);color:var(–amber)}.ps2{background:rgba(44,51,65,.1);color:var(–slate)}
-.divider{height:1px;background:var(–border);margin:22px 0}
-.empty{text-align:center;padding:44px 24px;color:var(–muted);font-size:14px}
+.pa{background:rgba(201,128,58,.15);color:var(--amber)}.ps2{background:rgba(44,51,65,.1);color:var(--slate)}
+.divider{height:1px;background:var(--border);margin:22px 0}
+.empty{text-align:center;padding:44px 24px;color:var(--muted);font-size:14px}
 .empty-icon{font-size:38px;display:block;margin-bottom:10px;opacity:.4}
-.identity-box{background:var(–cream2);border:1.5px solid var(–border);border-radius:var(–r);padding:10px 13px;font-size:14px;color:var(–slate2);margin-bottom:14px}
+.identity-box{background:var(--cream2);border:1.5px solid var(--border);border-radius:var(--r);padding:10px 13px;font-size:14px;color:var(--slate2);margin-bottom:14px}
 
 /* ── MOBILE ──────────────────────────────────────── */
 @media(max-width:820px){
-/* topbar */
-#topbar{padding:0 14px;height:52px}
-.brand{font-size:15px;margin-right:10px}
-.brand span{display:none}
-#user-area{gap:6px}
-.uc{padding:4px 8px 4px 4px}
-.un{font-size:11px}.ur{display:none}
-.logout-btn{font-size:10px;padding:4px 8px}
+  /* topbar */
+  #topbar{padding:0 14px;height:52px}
+  .brand{font-size:15px;margin-right:10px}
+  .brand span{display:none}
+  #user-area{gap:6px}
+  .uc{padding:4px 8px 4px 4px}
+  .un{font-size:11px}.ur{display:none}
+  .logout-btn{font-size:10px;padding:4px 8px}
 
-/* nav dropdowns stack nicely on mobile */
-#nav{gap:1px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
-#nav::-webkit-scrollbar{display:none}
-.nb{font-size:12px;padding:5px 10px}
-.nav-drop{min-width:150px}
+  /* nav dropdowns stack nicely on mobile */
+  #nav{gap:1px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+  #nav::-webkit-scrollbar{display:none}
+  .nb{font-size:12px;padding:5px 10px}
+  .nav-drop{min-width:150px}
 
-/* main content */
-main{padding:16px 14px 48px}
-.pt{font-size:24px}
-.hero{padding:22px 18px}
-.hero-title{font-size:22px}
-.hero-date{position:static;display:block;margin-top:10px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);padding:6px 12px;border-radius:var(–r);font-size:12px;width:fit-content}
-.stats{grid-template-columns:1fr 1fr}
-.dash-grid{grid-template-columns:1fr}
+  /* main content */
+  main{padding:16px 14px 48px}
+  .pt{font-size:24px}
+  .hero{padding:22px 18px}
+  .hero-title{font-size:22px}
+  .hero-date{position:static;display:block;margin-top:10px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);padding:6px 12px;border-radius:var(--r);font-size:12px;width:fit-content}
+  .stats{grid-template-columns:1fr 1fr}
+  .dash-grid{grid-template-columns:1fr}
 
-/* auth card */
-.auth-card{padding:24px 18px}
-.auth-logo-name{font-size:18px}
+  /* auth card */
+  .auth-card{padding:24px 18px}
+  .auth-logo-name{font-size:18px}
 
-/* forms — stack 2-col grids */
-.fr{grid-template-columns:1fr}
+  /* forms — stack 2-col grids */
+  .fr{grid-template-columns:1fr}
 
-/* laundry/equip layout */
-#page-laundry > div[style*=“grid”],
-#page-equip > div[style*=“grid”],
-#page-maintenance > div[style*=“grid”],
-#page-guests > div[style*=“grid”],
-#page-lostfound > div[style*=“grid”],
-#page-profile > div[style*=“grid”]{
-grid-template-columns:1fr !important
-}
+  /* laundry/equip layout */
+  #page-laundry > div[style*="grid"],
+  #page-equip > div[style*="grid"],
+  #page-maintenance > div[style*="grid"],
+  #page-guests > div[style*="grid"],
+  #page-lostfound > div[style*="grid"],
+  #page-profile > div[style*="grid"]{
+    grid-template-columns:1fr !important
+  }
 
-/* equip board */
-#equip-board{grid-template-columns:1fr 1fr}
+  /* equip board */
+  #equip-board{grid-template-columns:1fr 1fr}
 
-/* tables — make scrollable */
-.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{min-width:480px}
+  /* tables — make scrollable */
+  .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{min-width:480px}
 
-/* slot grid */
-.slot-grid{grid-template-columns:repeat(auto-fill,minmax(80px,1fr))}
+  /* slot grid */
+  .slot-grid{grid-template-columns:repeat(auto-fill,minmax(80px,1fr))}
 
-/* cards */
-.grid2{grid-template-columns:1fr}
-.card{padding:14px 16px}
-.adm{padding:16px}
+  /* cards */
+  .grid2{grid-template-columns:1fr}
+  .card{padding:14px 16px}
+  .adm{padding:16px}
 
-/* admin panel sections */
-.adm .fr{grid-template-columns:1fr}
+  /* admin panel sections */
+  .adm .fr{grid-template-columns:1fr}
 }
 
 @media(max-width:480px){
-#topbar{padding:0 10px}
-.brand{font-size:14px;gap:6px}
-.nb{font-size:11px;padding:4px 8px}
-main{padding:12px 10px 48px}
-.pt{font-size:20px}
-.stats{grid-template-columns:1fr 1fr}
-.sc{padding:12px 14px}
-.sc-val{font-size:22px}
-#equip-board{grid-template-columns:1fr}
-.hero{padding:18px 14px}
-.hero-title{font-size:19px}
-.ec-meta{gap:6px;font-size:12px}
-.slot{padding:7px 8px;font-size:12px}
-thead th{padding:8px 10px;font-size:9px}
-tbody td{padding:8px 10px;font-size:13px}
+  #topbar{padding:0 10px}
+  .brand{font-size:14px;gap:6px}
+  .nb{font-size:11px;padding:4px 8px}
+  main{padding:12px 10px 48px}
+  .pt{font-size:20px}
+  .stats{grid-template-columns:1fr 1fr}
+  .sc{padding:12px 14px}
+  .sc-val{font-size:22px}
+  #equip-board{grid-template-columns:1fr}
+  .hero{padding:18px 14px}
+  .hero-title{font-size:19px}
+  .ec-meta{gap:6px;font-size:12px}
+  .slot{padding:7px 8px;font-size:12px}
+  thead th{padding:8px 10px;font-size:9px}
+  tbody td{padding:8px 10px;font-size:13px}
 }</style>
-
 </head>
 <body>
 
 <!-- ═══ AUTH SCREEN ═══════════════════════════════════════════════ -->
-
 <div id="auth-screen">
   <div class="auth-card">
     <div class="auth-logo">
@@ -1453,63 +1430,59 @@ tbody td{padding:8px 10px;font-size:13px}
       </div>
     </div>
 
-```
-<div class="auth-tabs">
-  <button class="auth-tab active" onclick="authTab('login')">Sign In</button>
-  <button class="auth-tab"        onclick="authTab('register')">Register</button>
-</div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" onclick="authTab('login')">Sign In</button>
+      <button class="auth-tab"        onclick="authTab('register')">Register</button>
+    </div>
 
-<!-- LOGIN -->
-<div class="auth-panel active" id="ap-login">
-  <div class="auth-panel-title">Welcome back</div>
-  <div class="auth-panel-sub">Sign in to access news, events and bookings.</div>
-  <div class="auth-err" id="login-err"></div>
-  <div class="fg"><label>Username</label>
-    <input id="l-u" placeholder="Your username" autocomplete="username"
-           onkeydown="if(event.key==='Enter')doLogin()"></div>
-  <div class="fg"><label>Password</label>
-    <input id="l-p" type="password" placeholder="Your password" autocomplete="current-password"
-           onkeydown="if(event.key==='Enter')doLogin()"></div>
-  <button class="btn btn-p btn-full" style="margin-top:6px" onclick="doLogin()">Sign In →</button>
-  <div class="auth-link">No account? <a onclick="authTab('register')">Register here</a></div>
-</div>
+    <!-- LOGIN -->
+    <div class="auth-panel active" id="ap-login">
+      <div class="auth-panel-title">Welcome back</div>
+      <div class="auth-panel-sub">Sign in to access news, events and bookings.</div>
+      <div class="auth-err" id="login-err"></div>
+      <div class="fg"><label>Username</label>
+        <input id="l-u" placeholder="Your username" autocomplete="username"
+               onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div class="fg"><label>Password</label>
+        <input id="l-p" type="password" placeholder="Your password" autocomplete="current-password"
+               onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <button class="btn btn-p btn-full" style="margin-top:6px" onclick="doLogin()">Sign In →</button>
+      <div class="auth-link">No account? <a onclick="authTab('register')">Register here</a></div>
+    </div>
 
-<!-- REGISTER -->
-<div class="auth-panel" id="ap-register">
-  <div class="auth-panel-title">Create your account</div>
-  <div class="auth-panel-sub">Fill in your details to access the portal.</div>
-  <div class="auth-err" id="reg-err"></div>
-  <div class="fr">
-    <div class="fg"><label>Full Name</label>
-      <input id="r-n" placeholder="e.g. Sarah Ahmed"></div>
-    <div class="fg"><label>Room Number</label>
-      <input id="r-r" placeholder="e.g. 204"></div>
-  </div>
-  <div class="fr">
-    <div class="fg"><label>Email</label>
-      <input id="r-e" type="email" placeholder="your@email.com" autocomplete="email"></div>
-    <div class="fg"><label>Phone Number</label>
-      <input id="r-ph" type="tel" placeholder="e.g. +49 123 456789"></div>
-  </div>
-  <div class="fg"><label>Username</label>
-    <input id="r-u" placeholder="Choose a username" autocomplete="username"></div>
-  <div class="fr">
-    <div class="fg"><label>Password</label>
-      <input id="r-p" type="password" placeholder="Min. 6 characters" autocomplete="new-password"></div>
-    <div class="fg"><label>Confirm Password</label>
-      <input id="r-p2" type="password" placeholder="Repeat password"
-             onkeydown="if(event.key==='Enter')doRegister()"></div>
-  </div>
-  <button class="btn btn-p btn-full" style="margin-top:6px" onclick="doRegister()">Create Account →</button>
-  <div class="auth-link">Already registered? <a onclick="authTab('login')">Sign in</a></div>
-</div>
-```
-
+    <!-- REGISTER -->
+    <div class="auth-panel" id="ap-register">
+      <div class="auth-panel-title">Create your account</div>
+      <div class="auth-panel-sub">Fill in your details to access the portal.</div>
+      <div class="auth-err" id="reg-err"></div>
+      <div class="fr">
+        <div class="fg"><label>Full Name</label>
+          <input id="r-n" placeholder="e.g. Sarah Ahmed"></div>
+        <div class="fg"><label>Room Number</label>
+          <input id="r-r" placeholder="e.g. 204"></div>
+      </div>
+      <div class="fr">
+        <div class="fg"><label>Email</label>
+          <input id="r-e" type="email" placeholder="your@email.com" autocomplete="email"></div>
+        <div class="fg"><label>Phone Number</label>
+          <input id="r-ph" type="tel" placeholder="e.g. +49 123 456789"></div>
+      </div>
+      <div class="fg"><label>Username</label>
+        <input id="r-u" placeholder="Choose a username" autocomplete="username"></div>
+      <div class="fr">
+        <div class="fg"><label>Password</label>
+          <input id="r-p" type="password" placeholder="Min. 6 characters" autocomplete="new-password"></div>
+        <div class="fg"><label>Confirm Password</label>
+          <input id="r-p2" type="password" placeholder="Repeat password"
+                 onkeydown="if(event.key==='Enter')doRegister()"></div>
+      </div>
+      <button class="btn btn-p btn-full" style="margin-top:6px" onclick="doRegister()">Create Account →</button>
+      <div class="auth-link">Already registered? <a onclick="authTab('login')">Sign in</a></div>
+    </div>
   </div>
 </div>
 
 <!-- ═══ APP ═══════════════════════════════════════════════════════ -->
-
 <div id="app" style="display:none;flex-direction:column;min-height:100vh">
 
   <header id="topbar">
@@ -1521,48 +1494,45 @@ tbody td{padding:8px 10px;font-size:13px}
     <nav id="nav">
       <button class="nb active" onclick="showPage('dashboard')" data-page="dashboard">Dashboard</button>
 
-```
-  <!-- Community -->
-  <div class="nav-group">
-    <button class="nb" id="nav-community">Community <span class="nb-arrow">▾</span></button>
-    <div class="nav-drop">
-      <button onclick="showPage('news')"   data-page="news">📰 News</button>
-      <button onclick="showPage('events')" data-page="events">🎉 Events</button>
-      <button onclick="showPage('lostfound')" data-page="lostfound">🔍 Lost & Found</button>
+      <!-- Community -->
+      <div class="nav-group">
+        <button class="nb" id="nav-community">Community <span class="nb-arrow">▾</span></button>
+        <div class="nav-drop">
+          <button onclick="showPage('news')"   data-page="news">📰 News</button>
+          <button onclick="showPage('events')" data-page="events">🎉 Events</button>
+          <button onclick="showPage('lostfound')" data-page="lostfound">🔍 Lost & Found</button>
+        </div>
+      </div>
+
+      <!-- Bookings -->
+      <div class="nav-group">
+        <button class="nb" id="nav-bookings">Bookings <span class="nb-arrow">▾</span></button>
+        <div class="nav-drop">
+          <button onclick="showPage('laundry')" data-page="laundry">🧺 Laundry</button>
+          <button onclick="showPage('equip')"   data-page="equip">🔧 Equipment</button>
+          <button onclick="showPage('guests')"  data-page="guests">🏠 Guests</button>
+        </div>
+      </div>
+
+      <!-- Building -->
+      <div class="nav-group">
+        <button class="nb" id="nav-building">Building <span class="nb-arrow">▾</span></button>
+        <div class="nav-drop">
+          <button onclick="showPage('maintenance')" data-page="maintenance">🛠 Maintenance</button>
+          <button onclick="showPage('parcels')"     data-page="parcels">📦 Parcels</button>
+        </div>
+      </div>
+
+      <button class="nb" onclick="showPage('profile')" data-page="profile">👤 Profile</button>
+      <button class="nb" id="admin-btn" onclick="showPage('admin')" data-page="admin" style="display:none">⚙ Admin</button>
+    </nav>
+    <div id="user-area">
+      <div class="uc">
+        <div class="ua" id="ua">?</div>
+        <div><div class="un" id="un">—</div><div class="ur" id="ur">—</div></div>
+      </div>
+      <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
-  </div>
-
-  <!-- Bookings -->
-  <div class="nav-group">
-    <button class="nb" id="nav-bookings">Bookings <span class="nb-arrow">▾</span></button>
-    <div class="nav-drop">
-      <button onclick="showPage('laundry')" data-page="laundry">🧺 Laundry</button>
-      <button onclick="showPage('equip')"   data-page="equip">🔧 Equipment</button>
-      <button onclick="showPage('guests')"  data-page="guests">🏠 Guests</button>
-    </div>
-  </div>
-
-  <!-- Building -->
-  <div class="nav-group">
-    <button class="nb" id="nav-building">Building <span class="nb-arrow">▾</span></button>
-    <div class="nav-drop">
-      <button onclick="showPage('maintenance')" data-page="maintenance">🛠 Maintenance</button>
-      <button onclick="showPage('parcels')"     data-page="parcels">📦 Parcels</button>
-    </div>
-  </div>
-
-  <button class="nb" onclick="showPage('profile')" data-page="profile">👤 Profile</button>
-  <button class="nb" id="admin-btn" onclick="showPage('admin')" data-page="admin" style="display:none">⚙ Admin</button>
-</nav>
-<div id="user-area">
-  <div class="uc">
-    <div class="ua" id="ua">?</div>
-    <div><div class="un" id="un">—</div><div class="ur" id="ur">—</div></div>
-  </div>
-  <button class="logout-btn" onclick="doLogout()">Sign Out</button>
-</div>
-```
-
   </header>
 
   <div id="notice-bar">
@@ -1574,399 +1544,397 @@ tbody td{padding:8px 10px;font-size:13px}
 
   <main>
 
-```
-<!-- DASHBOARD -->
-<div class="page active" id="page-dashboard">
-  <div class="hero">
-    <div class="hero-title" id="hero-title">Good to see you 👋</div>
-    <div class="hero-sub">Your Residence Portal — news, events, and bookings in one place.</div>
-    <div class="hero-date" id="hero-date">
-      <div class="clock-time" id="clock-time">00:00:00</div>
-      <div class="clock-date" id="clock-date"></div>
-    </div>
-  </div>
-  <div class="stats">
-    <div class="sc"><div class="sc-lbl">Announcements</div><div class="sc-val" id="st-news">—</div></div>
-    <div class="sc"><div class="sc-lbl">Upcoming Events</div><div class="sc-val" id="st-evts">—</div></div>
-    <div class="sc"><div class="sc-lbl">Laundry Bookings</div><div class="sc-val" id="st-lnd">—</div></div>
-    <div class="sc"><div class="sc-lbl">Equipment</div><div class="sc-val" id="st-eq">—</div></div>
-  </div>
-  <div class="dash-grid">
-    <div>
-      <div class="st">Latest Announcements</div>
-      <div id="dash-news"></div>
-      <button class="btn btn-gh" style="margin-top:14px" onclick="showPage('news')">All news →</button>
-    </div>
-    <div>
-      <div class="st">Upcoming Events</div>
-      <div id="dash-evts"></div>
-      <button class="btn btn-gh" style="margin-top:14px" onclick="showPage('events')">All events →</button>
-    </div>
-  </div>
-  <!-- MINI CALENDAR -->
-  <div class="mini-cal" id="mini-cal-widget">
-    <div class="mini-cal-head">
-      <div class="mini-cal-title" id="cal-month-label"></div>
-      <div style="display:flex;gap:6px">
-        <button class="mini-cal-nav" onclick="calNav(-1)">‹</button>
-        <button class="mini-cal-nav" onclick="calNav(1)">›</button>
-      </div>
-    </div>
-    <div class="mini-cal-grid" id="cal-grid"></div>
-    <div class="cal-event-list" id="cal-event-list"></div>
-  </div>
-</div>
-
-<!-- NEWS -->
-<div class="page" id="page-news">
-  <div class="pt">News & Announcements</div>
-  <div class="ps">Building updates, policy changes, and management notices.</div>
-  <div class="toolbar">
-    <input id="news-q" placeholder="🔍 Search announcements…" oninput="renderNews()">
-    <select id="news-cat" onchange="renderNews()">
-      <option value="">All Categories</option>
-      <option>Kitchen</option><option>Laundry</option><option>Maintenance</option><option>General</option>
-    </select>
-  </div>
-  <div class="grid" id="news-list"></div>
-</div>
-
-<!-- EVENTS -->
-<div class="page" id="page-events">
-  <div class="pt">Events</div>
-  <div class="ps">Community gatherings and shared activities.</div>
-  <div style="display:flex;gap:10px;margin-bottom:22px;flex-wrap:wrap">
-    <button class="btn btn-s"  id="ef-all"      onclick="evtFilter('all')">All</button>
-    <button class="btn btn-gh" id="ef-upcoming"  onclick="evtFilter('upcoming')">Upcoming</button>
-    <button class="btn btn-gh" id="ef-past"      onclick="evtFilter('past')">Past</button>
-  </div>
-  <div class="grid grid2" id="evts-list"></div>
-</div>
-
-<!-- LAUNDRY -->
-<div class="page" id="page-laundry">
-  <div class="pt">Laundry Booking</div>
-  <div class="ps">Reserve a washing machine. The 10-minute rule applies after your cycle ends.</div>
-  <div style="display:grid;grid-template-columns:1fr 360px;gap:24px;align-items:start">
-    <div>
-      <div class="st">Make a Reservation</div>
-      <div class="adm" style="padding:22px">
-        <div class="fg"><label>Booking for</label>
-          <div class="identity-box" id="lb-id">—</div>
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div class="hero">
+        <div class="hero-title" id="hero-title">Good to see you 👋</div>
+        <div class="hero-sub">Your Residence Portal — news, events, and bookings in one place.</div>
+        <div class="hero-date" id="hero-date">
+          <div class="clock-time" id="clock-time">00:00:00</div>
+          <div class="clock-date" id="clock-date"></div>
         </div>
-        <div class="fg"><label>Machine</label>
-          <div class="m-tabs">
-            <button class="mt active" data-m="M1" onclick="selMachine(this)">Machine 1</button>
-            <button class="mt" data-m="M2" onclick="selMachine(this)">Machine 2</button>
-            <button class="mt" data-m="M3" onclick="selMachine(this)">Machine 3</button>
+      </div>
+      <div class="stats">
+        <div class="sc"><div class="sc-lbl">Announcements</div><div class="sc-val" id="st-news">—</div></div>
+        <div class="sc"><div class="sc-lbl">Upcoming Events</div><div class="sc-val" id="st-evts">—</div></div>
+        <div class="sc"><div class="sc-lbl">Laundry Bookings</div><div class="sc-val" id="st-lnd">—</div></div>
+        <div class="sc"><div class="sc-lbl">Equipment</div><div class="sc-val" id="st-eq">—</div></div>
+      </div>
+      <div class="dash-grid">
+        <div>
+          <div class="st">Latest Announcements</div>
+          <div id="dash-news"></div>
+          <button class="btn btn-gh" style="margin-top:14px" onclick="showPage('news')">All news →</button>
+        </div>
+        <div>
+          <div class="st">Upcoming Events</div>
+          <div id="dash-evts"></div>
+          <button class="btn btn-gh" style="margin-top:14px" onclick="showPage('events')">All events →</button>
+        </div>
+      </div>
+      <!-- MINI CALENDAR -->
+      <div class="mini-cal" id="mini-cal-widget">
+        <div class="mini-cal-head">
+          <div class="mini-cal-title" id="cal-month-label"></div>
+          <div style="display:flex;gap:6px">
+            <button class="mini-cal-nav" onclick="calNav(-1)">‹</button>
+            <button class="mini-cal-nav" onclick="calNav(1)">›</button>
           </div>
         </div>
-        <div class="fg"><label>Date</label><input type="date" id="lb-date" onchange="renderSlots()"></div>
-        <div class="fg">
-          <label>Time Slot</label>
-          <div class="slot-grid" id="lb-slots"><div style="color:var(--muted);font-size:13px">Choose a date above.</div></div>
-        </div>
-        <input type="hidden" id="lb-slot">
-        <button class="btn btn-p btn-full" onclick="bookLaundry()">Confirm Reservation</button>
+        <div class="mini-cal-grid" id="cal-grid"></div>
+        <div class="cal-event-list" id="cal-event-list"></div>
       </div>
     </div>
-    <div>
-      <div class="st">All Reservations</div>
+
+    <!-- NEWS -->
+    <div class="page" id="page-news">
+      <div class="pt">News & Announcements</div>
+      <div class="ps">Building updates, policy changes, and management notices.</div>
+      <div class="toolbar">
+        <input id="news-q" placeholder="🔍 Search announcements…" oninput="renderNews()">
+        <select id="news-cat" onchange="renderNews()">
+          <option value="">All Categories</option>
+          <option>Kitchen</option><option>Laundry</option><option>Maintenance</option><option>General</option>
+        </select>
+      </div>
+      <div class="grid" id="news-list"></div>
+    </div>
+
+    <!-- EVENTS -->
+    <div class="page" id="page-events">
+      <div class="pt">Events</div>
+      <div class="ps">Community gatherings and shared activities.</div>
+      <div style="display:flex;gap:10px;margin-bottom:22px;flex-wrap:wrap">
+        <button class="btn btn-s"  id="ef-all"      onclick="evtFilter('all')">All</button>
+        <button class="btn btn-gh" id="ef-upcoming"  onclick="evtFilter('upcoming')">Upcoming</button>
+        <button class="btn btn-gh" id="ef-past"      onclick="evtFilter('past')">Past</button>
+      </div>
+      <div class="grid grid2" id="evts-list"></div>
+    </div>
+
+    <!-- LAUNDRY -->
+    <div class="page" id="page-laundry">
+      <div class="pt">Laundry Booking</div>
+      <div class="ps">Reserve a washing machine. The 10-minute rule applies after your cycle ends.</div>
+      <div style="display:grid;grid-template-columns:1fr 360px;gap:24px;align-items:start">
+        <div>
+          <div class="st">Make a Reservation</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Booking for</label>
+              <div class="identity-box" id="lb-id">—</div>
+            </div>
+            <div class="fg"><label>Machine</label>
+              <div class="m-tabs">
+                <button class="mt active" data-m="M1" onclick="selMachine(this)">Machine 1</button>
+                <button class="mt" data-m="M2" onclick="selMachine(this)">Machine 2</button>
+                <button class="mt" data-m="M3" onclick="selMachine(this)">Machine 3</button>
+              </div>
+            </div>
+            <div class="fg"><label>Date</label><input type="date" id="lb-date" onchange="renderSlots()"></div>
+            <div class="fg">
+              <label>Time Slot</label>
+              <div class="slot-grid" id="lb-slots"><div style="color:var(--muted);font-size:13px">Choose a date above.</div></div>
+            </div>
+            <input type="hidden" id="lb-slot">
+            <button class="btn btn-p btn-full" onclick="bookLaundry()">Confirm Reservation</button>
+          </div>
+        </div>
+        <div>
+          <div class="st">All Reservations</div>
+          <div class="tw">
+            <table><thead><tr><th>Name</th><th>Room</th><th>Machine</th><th>Date</th><th>Slot</th><th></th></tr></thead>
+            <tbody id="lnd-tbody"></tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EQUIPMENT -->
+    <div class="page" id="page-equip">
+      <div class="pt">Equipment Booking</div>
+      <div class="ps">Reserve shared equipment. Maximum 1 hour per item per day per resident.</div>
+
+      <!-- LIVE STATUS BOARD -->
+      <div class="st">📊 Equipment Status Board</div>
+      <div id="equip-board" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin-bottom:32px"></div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+        <!-- BOOKING FORM -->
+        <div>
+          <div class="st">Book Equipment</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Booking for</label>
+              <div class="identity-box" id="eq-id">—</div>
+            </div>
+            <div class="fg"><label>Equipment</label>
+              <select id="eq-item">
+                <option value="Vacuum Cleaner">🧹 Vacuum Cleaner (max 1hr/day)</option>
+                <option value="Ladder">🪜 Ladder</option>
+                <option value="Power Drill">🔧 Power Drill</option>
+                <option value="Ironing Board">👔 Ironing Board</option>
+              </select>
+            </div>
+            <div class="fg"><label>Date</label><input type="date" id="eq-date"></div>
+            <div class="fr">
+              <div class="fg"><label>Start Time</label><input type="time" id="eq-start" placeholder="e.g. 14:00"></div>
+              <div class="fg"><label>End Time</label><input type="time" id="eq-end" placeholder="e.g. 15:00"></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+              <span class="pill pa">📋 Max 1 hour per item per day</span>
+              <span class="pill ps2">Return equipment after use</span>
+            </div>
+            <button class="btn btn-p btn-full" onclick="bookEquip()">Book Equipment</button>
+          </div>
+        </div>
+
+      <!-- FULL BOOKINGS TABLE -->
+      <div class="st" style="margin-top:28px">All Equipment Bookings</div>
       <div class="tw">
-        <table><thead><tr><th>Name</th><th>Room</th><th>Machine</th><th>Date</th><th>Slot</th><th></th></tr></thead>
-        <tbody id="lnd-tbody"></tbody></table>
+        <table><thead><tr><th>Name</th><th>Room</th><th>Item</th><th>Date</th><th>From</th><th>Until</th><th></th></tr></thead>
+        <tbody id="eq-tbody"></tbody></table>
       </div>
-    </div>
-  </div>
-</div>
+      </div><!-- end grid -->
+    </div><!-- end page-equip -->
 
-<!-- EQUIPMENT -->
-<div class="page" id="page-equip">
-  <div class="pt">Equipment Booking</div>
-  <div class="ps">Reserve shared equipment. Maximum 1 hour per item per day per resident.</div>
+    <!-- ADMIN -->
+    <div class="page" id="page-admin">
+      <div class="pt">Administration</div>
+      <div class="ps">Manage notices, news, events, bookings, and residents.</div>
 
-  <!-- LIVE STATUS BOARD -->
-  <div class="st">📊 Equipment Status Board</div>
-  <div id="equip-board" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin-bottom:32px"></div>
-
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
-    <!-- BOOKING FORM -->
-    <div>
-      <div class="st">Book Equipment</div>
-      <div class="adm" style="padding:22px">
-        <div class="fg"><label>Booking for</label>
-          <div class="identity-box" id="eq-id">—</div>
+      <div class="adm">
+        <h3>📢 Notices</h3>
+        <div class="fr" style="margin-bottom:12px">
+          <div class="fg"><label>Notice Text</label><input id="adm-nt" placeholder="Enter notice…"></div>
+          <div class="fg" style="display:flex;align-items:flex-end;padding-bottom:0">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;text-transform:none;letter-spacing:0;margin-bottom:0">
+              <input type="checkbox" id="adm-nu" style="width:auto"> Urgent
+            </label>
+          </div>
         </div>
-        <div class="fg"><label>Equipment</label>
-          <select id="eq-item">
-            <option value="Vacuum Cleaner">🧹 Vacuum Cleaner (max 1hr/day)</option>
-            <option value="Ladder">🪜 Ladder</option>
-            <option value="Power Drill">🔧 Power Drill</option>
-            <option value="Ironing Board">👔 Ironing Board</option>
-          </select>
-        </div>
-        <div class="fg"><label>Date</label><input type="date" id="eq-date"></div>
+        <button class="btn btn-p btn-sm" onclick="addNotice()">Post Notice</button>
+        <div class="divider"></div>
+        <div id="adm-notices"></div>
+      </div>
+
+      <div class="adm">
+        <h3>📰 Post News</h3>
         <div class="fr">
-          <div class="fg"><label>Start Time</label><input type="time" id="eq-start" placeholder="e.g. 14:00"></div>
-          <div class="fg"><label>End Time</label><input type="time" id="eq-end" placeholder="e.g. 15:00"></div>
+          <div class="fg"><label>Title</label><input id="adm-nwt" placeholder="Announcement title"></div>
+          <div class="fg"><label>Category</label>
+            <select id="adm-nwc"><option>Kitchen</option><option>Laundry</option><option>Maintenance</option><option>General</option></select>
+          </div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-          <span class="pill pa">📋 Max 1 hour per item per day</span>
-          <span class="pill ps2">Return equipment after use</span>
-        </div>
-        <button class="btn btn-p btn-full" onclick="bookEquip()">Book Equipment</button>
+        <div class="fg"><label>Date</label><input type="date" id="adm-nwd" style="max-width:200px"></div>
+        <div class="fg"><label>Content</label><textarea id="adm-nwb" placeholder="Full announcement text…"></textarea></div>
+        <button class="btn btn-p" onclick="postNews()">Publish</button>
       </div>
-    </div>
 
-  <!-- FULL BOOKINGS TABLE -->
-  <div class="st" style="margin-top:28px">All Equipment Bookings</div>
-  <div class="tw">
-    <table><thead><tr><th>Name</th><th>Room</th><th>Item</th><th>Date</th><th>From</th><th>Until</th><th></th></tr></thead>
-    <tbody id="eq-tbody"></tbody></table>
-  </div>
-  </div><!-- end grid -->
-</div><!-- end page-equip -->
-
-<!-- ADMIN -->
-<div class="page" id="page-admin">
-  <div class="pt">Administration</div>
-  <div class="ps">Manage notices, news, events, bookings, and residents.</div>
-
-  <div class="adm">
-    <h3>📢 Notices</h3>
-    <div class="fr" style="margin-bottom:12px">
-      <div class="fg"><label>Notice Text</label><input id="adm-nt" placeholder="Enter notice…"></div>
-      <div class="fg" style="display:flex;align-items:flex-end;padding-bottom:0">
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;text-transform:none;letter-spacing:0;margin-bottom:0">
-          <input type="checkbox" id="adm-nu" style="width:auto"> Urgent
-        </label>
-      </div>
-    </div>
-    <button class="btn btn-p btn-sm" onclick="addNotice()">Post Notice</button>
-    <div class="divider"></div>
-    <div id="adm-notices"></div>
-  </div>
-
-  <div class="adm">
-    <h3>📰 Post News</h3>
-    <div class="fr">
-      <div class="fg"><label>Title</label><input id="adm-nwt" placeholder="Announcement title"></div>
-      <div class="fg"><label>Category</label>
-        <select id="adm-nwc"><option>Kitchen</option><option>Laundry</option><option>Maintenance</option><option>General</option></select>
-      </div>
-    </div>
-    <div class="fg"><label>Date</label><input type="date" id="adm-nwd" style="max-width:200px"></div>
-    <div class="fg"><label>Content</label><textarea id="adm-nwb" placeholder="Full announcement text…"></textarea></div>
-    <button class="btn btn-p" onclick="postNews()">Publish</button>
-  </div>
-
-  <div class="adm">
-    <h3>🎉 Create Event</h3>
-    <div class="fr">
-      <div class="fg"><label>Event Name</label><input id="adm-en" placeholder="e.g. Game Night"></div>
-      <div class="fg"><label>Location</label><input id="adm-el" placeholder="e.g. Lounge Area"></div>
-    </div>
-    <div class="fr">
-      <div class="fg"><label>Date</label><input type="date" id="adm-ed"></div>
-      <div class="fg"><label>Time</label><input type="time" id="adm-et"></div>
-    </div>
-    <div class="fg"><label>Max Participants</label><input type="number" id="adm-em" placeholder="20" min="1" style="max-width:120px"></div>
-    <div class="fg"><label>Description</label><textarea id="adm-edesc" placeholder="What's happening?"></textarea></div>
-    <button class="btn btn-p" onclick="createEvent()">Create Event</button>
-  </div>
-
-  <div class="adm"><h3>📋 Manage News</h3><div id="adm-news"></div></div>
-  <div class="adm"><h3>📋 Manage Events</h3><div id="adm-evts"></div></div>
-
-  <div class="adm">
-    <h3>👥 Registered Residents</h3>
-    <div class="tw"><table>
-      <thead><tr><th>Name</th><th>Room</th><th>Username</th><th>Email</th><th>Phone</th><th>Role</th><th>Joined</th><th></th></tr></thead>
-      <tbody id="adm-users"></tbody>
-    </table></div>
-  </div>
-
-  <div class="adm">
-    <h3>🧺 All Laundry Bookings</h3>
-    <div class="tw"><table>
-      <thead><tr><th>Name</th><th>Room</th><th>Machine</th><th>Date</th><th>Slot</th><th></th></tr></thead>
-      <tbody id="adm-lnd"></tbody>
-    </table></div>
-  </div>
-
-  <div class="adm">
-    <h3>🔧 All Equipment Bookings</h3>
-    <div class="tw"><table>
-      <thead><tr><th>Name</th><th>Room</th><th>Item</th><th>Date</th><th>From</th><th>Until</th><th></th></tr></thead>
-      <tbody id="adm-eq"></tbody>
-    </table></div>
-  </div>
-
-  <div class="adm">
-    <h3>🔧 Maintenance Requests</h3>
-    <div class="tw"><table>
-      <thead><tr><th>Name</th><th>Room</th><th>Title</th><th>Category</th><th>Status</th><th>Date</th><th></th></tr></thead>
-      <tbody id="adm-maint"></tbody>
-    </table></div>
-  </div>
-
-  <div class="adm">
-    <h3>📦 Log Incoming Parcel</h3>
-    <div class="fr">
-      <div class="fg"><label>Resident Name</label><input id="adm-pname" placeholder="Resident's full name"></div>
-      <div class="fg"><label>Room</label><input id="adm-proom" placeholder="Room number"></div>
-    </div>
-    <div class="fr">
-      <div class="fg"><label>Description</label><input id="adm-pdesc" placeholder="e.g. Amazon parcel, large box"></div>
-      <div class="fg"><label>Carrier</label><input id="adm-pcarrier" placeholder="e.g. DHL, DPD, Hermes"></div>
-    </div>
-    <button class="btn btn-p btn-sm" onclick="logParcel()">Log Parcel</button>
-    <div class="divider"></div>
-    <div class="tw"><table>
-      <thead><tr><th>Name</th><th>Room</th><th>Description</th><th>Carrier</th><th>Arrived</th><th>Status</th><th></th></tr></thead>
-      <tbody id="adm-parcels"></tbody>
-    </table></div>
-  </div>
-</div>
-
-<!-- MAINTENANCE -->
-<div class="page" id="page-maintenance">
-  <div class="pt">Maintenance Requests</div>
-  <div class="ps">Report issues in the building — broken lights, plumbing, damage, etc.</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
-    <div>
-      <div class="st">Submit a Request</div>
-      <div class="adm" style="padding:22px">
-        <div class="fg"><label>Title</label><input id="mnt-title" placeholder="e.g. Broken light in hallway"></div>
-        <div class="fg"><label>Category</label>
-          <select id="mnt-cat">
-            <option>Plumbing</option><option>Electrical</option><option>Heating</option>
-            <option>Cleaning</option><option>Furniture</option><option>Other</option>
-          </select>
-        </div>
-        <div class="fg"><label>Description</label>
-          <textarea id="mnt-desc" placeholder="Describe the issue in detail…"></textarea>
-        </div>
-        <button class="btn btn-p btn-full" onclick="submitMaint()">Submit Request</button>
-      </div>
-    </div>
-    <div>
-      <div class="st">My Requests</div>
-      <div id="mnt-my-list"></div>
-    </div>
-  </div>
-  <div class="st" style="margin-top:28px">All Open Requests</div>
-  <div class="tw"><table>
-    <thead><tr><th>Room</th><th>Title</th><th>Category</th><th>Status</th><th>Submitted</th></tr></thead>
-    <tbody id="mnt-tbody"></tbody>
-  </table></div>
-</div>
-
-<!-- PARCELS -->
-<div class="page" id="page-parcels">
-  <div class="pt">📦 Parcels & Mail</div>
-  <div class="ps">Check if you have a parcel or letter waiting for collection.</div>
-  <div class="st">Waiting for Collection</div>
-  <div id="parcel-list"></div>
-  <div class="st" style="margin-top:28px">Collected</div>
-  <div id="parcel-collected-list"></div>
-</div>
-
-<!-- GUESTS -->
-<div class="page" id="page-guests">
-  <div class="pt">🏠 Guest Registration</div>
-  <div class="ps">Register overnight guests staying in your room.</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
-    <div>
-      <div class="st">Register a Guest</div>
-      <div class="adm" style="padding:22px">
-        <div class="fg"><label>Guest Name</label><input id="gs-name" placeholder="Full name of guest"></div>
+      <div class="adm">
+        <h3>🎉 Create Event</h3>
         <div class="fr">
-          <div class="fg"><label>Check-In Date</label><input type="date" id="gs-in"></div>
-          <div class="fg"><label>Check-Out Date</label><input type="date" id="gs-out"></div>
+          <div class="fg"><label>Event Name</label><input id="adm-en" placeholder="e.g. Game Night"></div>
+          <div class="fg"><label>Location</label><input id="adm-el" placeholder="e.g. Lounge Area"></div>
         </div>
-        <button class="btn btn-p btn-full" onclick="registerGuest()">Register Guest</button>
+        <div class="fr">
+          <div class="fg"><label>Date</label><input type="date" id="adm-ed"></div>
+          <div class="fg"><label>Time</label><input type="time" id="adm-et"></div>
+        </div>
+        <div class="fg"><label>Max Participants</label><input type="number" id="adm-em" placeholder="20" min="1" style="max-width:120px"></div>
+        <div class="fg"><label>Description</label><textarea id="adm-edesc" placeholder="What's happening?"></textarea></div>
+        <button class="btn btn-p" onclick="createEvent()">Create Event</button>
       </div>
-    </div>
-    <div>
-      <div class="st">My Current Guests</div>
-      <div id="gs-my-list"></div>
-    </div>
-  </div>
-  <div class="st" style="margin-top:28px">All Active Guests</div>
-  <div class="tw"><table>
-    <thead><tr><th>Resident</th><th>Room</th><th>Guest</th><th>Check-In</th><th>Check-Out</th><th></th></tr></thead>
-    <tbody id="gs-tbody"></tbody>
-  </table></div>
-</div>
 
-<!-- LOST & FOUND -->
-<div class="page" id="page-lostfound">
-  <div class="pt">🔍 Lost & Found</div>
-  <div class="ps">Post lost or found items. Help your neighbours reunite with their belongings.</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
-    <div>
-      <div class="st">Post an Item</div>
-      <div class="adm" style="padding:22px">
-        <div class="fg"><label>Type</label>
-          <select id="lf-type">
-            <option value="lost">🔴 Lost — I lost this item</option>
-            <option value="found">🟢 Found — I found this item</option>
-          </select>
-        </div>
-        <div class="fg"><label>Item Title</label><input id="lf-title" placeholder="e.g. Blue umbrella, Airpods case"></div>
-        <div class="fg"><label>Description</label>
-          <textarea id="lf-desc" placeholder="Describe the item, where it was lost/found…"></textarea>
-        </div>
-        <button class="btn btn-p btn-full" onclick="postLF()">Post Item</button>
-      </div>
-    </div>
-    <div>
-      <div class="st">My Posts</div>
-      <div id="lf-my-list"></div>
-    </div>
-  </div>
-  <div class="st" style="margin-top:28px">Active Listings</div>
-  <div class="grid grid2" id="lf-list"></div>
-</div>
+      <div class="adm"><h3>📋 Manage News</h3><div id="adm-news"></div></div>
+      <div class="adm"><h3>📋 Manage Events</h3><div id="adm-evts"></div></div>
 
-<!-- PROFILE -->
-<div class="page" id="page-profile">
-  <div class="pt">👤 My Profile</div>
-  <div class="ps">Update your contact details and password.</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;max-width:700px">
-    <div>
-      <div class="st">Contact Details</div>
-      <div class="adm" style="padding:22px">
-        <div class="fg"><label>Full Name</label><input id="prof-name" placeholder="Your name"></div>
-        <div class="fg"><label>Email</label><input id="prof-email" type="email" placeholder="your@email.com"></div>
-        <div class="fg"><label>Phone</label><input id="prof-phone" type="tel" placeholder="+49 123 456789"></div>
-        <button class="btn btn-p btn-full" onclick="saveProfile()">Save Changes</button>
+      <div class="adm">
+        <h3>👥 Registered Residents</h3>
+        <div class="tw"><table>
+          <thead><tr><th>Name</th><th>Room</th><th>Username</th><th>Email</th><th>Phone</th><th>Role</th><th>Joined</th><th></th></tr></thead>
+          <tbody id="adm-users"></tbody>
+        </table></div>
+      </div>
+
+      <div class="adm">
+        <h3>🧺 All Laundry Bookings</h3>
+        <div class="tw"><table>
+          <thead><tr><th>Name</th><th>Room</th><th>Machine</th><th>Date</th><th>Slot</th><th></th></tr></thead>
+          <tbody id="adm-lnd"></tbody>
+        </table></div>
+      </div>
+
+      <div class="adm">
+        <h3>🔧 All Equipment Bookings</h3>
+        <div class="tw"><table>
+          <thead><tr><th>Name</th><th>Room</th><th>Item</th><th>Date</th><th>From</th><th>Until</th><th></th></tr></thead>
+          <tbody id="adm-eq"></tbody>
+        </table></div>
+      </div>
+
+      <div class="adm">
+        <h3>🔧 Maintenance Requests</h3>
+        <div class="tw"><table>
+          <thead><tr><th>Name</th><th>Room</th><th>Title</th><th>Category</th><th>Status</th><th>Date</th><th></th></tr></thead>
+          <tbody id="adm-maint"></tbody>
+        </table></div>
+      </div>
+
+      <div class="adm">
+        <h3>📦 Log Incoming Parcel</h3>
+        <div class="fr">
+          <div class="fg"><label>Resident Name</label><input id="adm-pname" placeholder="Resident's full name"></div>
+          <div class="fg"><label>Room</label><input id="adm-proom" placeholder="Room number"></div>
+        </div>
+        <div class="fr">
+          <div class="fg"><label>Description</label><input id="adm-pdesc" placeholder="e.g. Amazon parcel, large box"></div>
+          <div class="fg"><label>Carrier</label><input id="adm-pcarrier" placeholder="e.g. DHL, DPD, Hermes"></div>
+        </div>
+        <button class="btn btn-p btn-sm" onclick="logParcel()">Log Parcel</button>
+        <div class="divider"></div>
+        <div class="tw"><table>
+          <thead><tr><th>Name</th><th>Room</th><th>Description</th><th>Carrier</th><th>Arrived</th><th>Status</th><th></th></tr></thead>
+          <tbody id="adm-parcels"></tbody>
+        </table></div>
       </div>
     </div>
-    <div>
-      <div class="st">Change Password</div>
-      <div class="adm" style="padding:22px">
-        <div class="fg"><label>Current Password</label><input id="prof-pw-old" type="password" placeholder="Current password"></div>
-        <div class="fg"><label>New Password</label><input id="prof-pw-new" type="password" placeholder="New password (min 6 chars)"></div>
-        <div class="fg"><label>Confirm New Password</label><input id="prof-pw-new2" type="password" placeholder="Repeat new password"></div>
-        <button class="btn btn-s btn-full" onclick="changePassword()">Change Password</button>
+
+    <!-- MAINTENANCE -->
+    <div class="page" id="page-maintenance">
+      <div class="pt">Maintenance Requests</div>
+      <div class="ps">Report issues in the building — broken lights, plumbing, damage, etc.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+        <div>
+          <div class="st">Submit a Request</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Title</label><input id="mnt-title" placeholder="e.g. Broken light in hallway"></div>
+            <div class="fg"><label>Category</label>
+              <select id="mnt-cat">
+                <option>Plumbing</option><option>Electrical</option><option>Heating</option>
+                <option>Cleaning</option><option>Furniture</option><option>Other</option>
+              </select>
+            </div>
+            <div class="fg"><label>Description</label>
+              <textarea id="mnt-desc" placeholder="Describe the issue in detail…"></textarea>
+            </div>
+            <button class="btn btn-p btn-full" onclick="submitMaint()">Submit Request</button>
+          </div>
+        </div>
+        <div>
+          <div class="st">My Requests</div>
+          <div id="mnt-my-list"></div>
+        </div>
+      </div>
+      <div class="st" style="margin-top:28px">All Open Requests</div>
+      <div class="tw"><table>
+        <thead><tr><th>Room</th><th>Title</th><th>Category</th><th>Status</th><th>Submitted</th></tr></thead>
+        <tbody id="mnt-tbody"></tbody>
+      </table></div>
+    </div>
+
+    <!-- PARCELS -->
+    <div class="page" id="page-parcels">
+      <div class="pt">📦 Parcels & Mail</div>
+      <div class="ps">Check if you have a parcel or letter waiting for collection.</div>
+      <div class="st">Waiting for Collection</div>
+      <div id="parcel-list"></div>
+      <div class="st" style="margin-top:28px">Collected</div>
+      <div id="parcel-collected-list"></div>
+    </div>
+
+    <!-- GUESTS -->
+    <div class="page" id="page-guests">
+      <div class="pt">🏠 Guest Registration</div>
+      <div class="ps">Register overnight guests staying in your room.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+        <div>
+          <div class="st">Register a Guest</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Guest Name</label><input id="gs-name" placeholder="Full name of guest"></div>
+            <div class="fr">
+              <div class="fg"><label>Check-In Date</label><input type="date" id="gs-in"></div>
+              <div class="fg"><label>Check-Out Date</label><input type="date" id="gs-out"></div>
+            </div>
+            <button class="btn btn-p btn-full" onclick="registerGuest()">Register Guest</button>
+          </div>
+        </div>
+        <div>
+          <div class="st">My Current Guests</div>
+          <div id="gs-my-list"></div>
+        </div>
+      </div>
+      <div class="st" style="margin-top:28px">All Active Guests</div>
+      <div class="tw"><table>
+        <thead><tr><th>Resident</th><th>Room</th><th>Guest</th><th>Check-In</th><th>Check-Out</th><th></th></tr></thead>
+        <tbody id="gs-tbody"></tbody>
+      </table></div>
+    </div>
+
+    <!-- LOST & FOUND -->
+    <div class="page" id="page-lostfound">
+      <div class="pt">🔍 Lost & Found</div>
+      <div class="ps">Post lost or found items. Help your neighbours reunite with their belongings.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+        <div>
+          <div class="st">Post an Item</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Type</label>
+              <select id="lf-type">
+                <option value="lost">🔴 Lost — I lost this item</option>
+                <option value="found">🟢 Found — I found this item</option>
+              </select>
+            </div>
+            <div class="fg"><label>Item Title</label><input id="lf-title" placeholder="e.g. Blue umbrella, Airpods case"></div>
+            <div class="fg"><label>Description</label>
+              <textarea id="lf-desc" placeholder="Describe the item, where it was lost/found…"></textarea>
+            </div>
+            <button class="btn btn-p btn-full" onclick="postLF()">Post Item</button>
+          </div>
+        </div>
+        <div>
+          <div class="st">My Posts</div>
+          <div id="lf-my-list"></div>
+        </div>
+      </div>
+      <div class="st" style="margin-top:28px">Active Listings</div>
+      <div class="grid grid2" id="lf-list"></div>
+    </div>
+
+    <!-- PROFILE -->
+    <div class="page" id="page-profile">
+      <div class="pt">👤 My Profile</div>
+      <div class="ps">Update your contact details and password.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;max-width:700px">
+        <div>
+          <div class="st">Contact Details</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Full Name</label><input id="prof-name" placeholder="Your name"></div>
+            <div class="fg"><label>Email</label><input id="prof-email" type="email" placeholder="your@email.com"></div>
+            <div class="fg"><label>Phone</label><input id="prof-phone" type="tel" placeholder="+49 123 456789"></div>
+            <button class="btn btn-p btn-full" onclick="saveProfile()">Save Changes</button>
+          </div>
+        </div>
+        <div>
+          <div class="st">Change Password</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Current Password</label><input id="prof-pw-old" type="password" placeholder="Current password"></div>
+            <div class="fg"><label>New Password</label><input id="prof-pw-new" type="password" placeholder="New password (min 6 chars)"></div>
+            <div class="fg"><label>Confirm New Password</label><input id="prof-pw-new2" type="password" placeholder="Repeat new password"></div>
+            <button class="btn btn-s btn-full" onclick="changePassword()">Change Password</button>
+          </div>
+        </div>
+      </div>
+      <div class="st" style="margin-top:28px;max-width:700px">My Bookings</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:700px">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Laundry</div>
+          <div id="prof-lnd"></div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Equipment</div>
+          <div id="prof-eq"></div>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="st" style="margin-top:28px;max-width:700px">My Bookings</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:700px">
-    <div>
-      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Laundry</div>
-      <div id="prof-lnd"></div>
-    </div>
-    <div>
-      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Equipment</div>
-      <div id="prof-eq"></div>
-    </div>
-  </div>
-</div>
-```
 
   </main>
 </div><!-- #app -->
@@ -2839,7 +2807,6 @@ document.addEventListener('click',()=>{
 // ── INIT ─────────────────────────────────────────────────────────
 checkExistingSession();
 </script>
-
 </body>
 </html>
 )HTMLEOF";
@@ -2848,644 +2815,641 @@ checkExistingSession();
 //  §13  main()
 // ═══════════════════════════════════════════════════════════════════
 int main(int argc, char** argv){
-signal(SIGPIPE, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
 
-```
-int port = 3000;
-if(argc>1) port=std::atoi(argv[1]);
+    int port = 3000;
+    if(argc>1) port=std::atoi(argv[1]);
 
-// Get Postgres URL from environment
-const char* dbUrl=std::getenv("DATABASE_URL");
-if(!dbUrl){ std::cerr<<"WARNING: DATABASE_URL not set — data will not persist!\n"; dbUrl=""; }
+    // Get Postgres URL from environment
+    const char* dbUrl=std::getenv("DATABASE_URL");
+    if(!dbUrl){ std::cerr<<"WARNING: DATABASE_URL not set — data will not persist!\n"; dbUrl=""; }
 
-std::cout<<"\n╔══════════════════════════════════════════╗\n";
-std::cout<<"║   Residence Management System  (C++)     ║\n";
-std::cout<<"╠══════════════════════════════════════════╣\n";
+    std::cout<<"\n╔══════════════════════════════════════════╗\n";
+    std::cout<<"║   Residence Management System  (C++)     ║\n";
+    std::cout<<"╠══════════════════════════════════════════╣\n";
 
-DB       db;
-Sessions sessions;
-SSEBroker sse;
-Mailer   mailer;
+    DB       db;
+    Sessions sessions;
+    SSEBroker sse;
+    Mailer   mailer;
 
-std::cout<<"  Loading database…\n";
-db.load(dbUrl);
-mailer.init();
+    std::cout<<"  Loading database…\n";
+    db.load(dbUrl);
+    mailer.init();
 
-Server srv;
-// ── Routes (inlined) ──────────────────────────────────────────
+    Server srv;
+    // ── Routes (inlined) ──────────────────────────────────────────
 
-// helper: get authenticated user (MUST be called with db.mtx held)
-auto auth=[&](const Req& req, Res& res) -> User* {
-    auto uid=sessions.getUid(getToken(req));
-    if(uid.empty()){ res.err(401,"Please log in."); return nullptr; }
-    User* u=db.findUser(uid);
-    if(!u){ res.err(401,"Session expired."); return nullptr; }
-    return u;
-};
-// helper: broadcast events array
-auto bcEvents=[&](){
-    auto list=db.events;
-    std::sort(list.begin(),list.end(),[](auto&a,auto&b){return a.date<b.date;});
-    sse.broadcast("events",toJArr(list).dump());
-};
-auto bcLaundry=[&](){ sse.broadcast("laundry",toJArr(db.laundry).dump()); };
-auto bcEquip  =[&](){ sse.broadcast("equip",  toJArr(db.equip).dump());   };
-auto bcNotices=[&](){
-    Json a=Json::array();
-    for(auto&n:db.notices) if(n.active) a.push(toJ(n));
-    sse.broadcast("notices",a.dump());
-};
+    // helper: get authenticated user (MUST be called with db.mtx held)
+    auto auth=[&](const Req& req, Res& res) -> User* {
+        auto uid=sessions.getUid(getToken(req));
+        if(uid.empty()){ res.err(401,"Please log in."); return nullptr; }
+        User* u=db.findUser(uid);
+        if(!u){ res.err(401,"Session expired."); return nullptr; }
+        return u;
+    };
+    // helper: broadcast events array
+    auto bcEvents=[&](){
+        auto list=db.events;
+        std::sort(list.begin(),list.end(),[](auto&a,auto&b){return a.date<b.date;});
+        sse.broadcast("events",toJArr(list).dump());
+    };
+    auto bcLaundry=[&](){ sse.broadcast("laundry",toJArr(db.laundry).dump()); };
+    auto bcEquip  =[&](){ sse.broadcast("equip",  toJArr(db.equip).dump());   };
+    auto bcNotices=[&](){
+        Json a=Json::array();
+        for(auto&n:db.notices) if(n.active) a.push(toJ(n));
+        sse.broadcast("notices",a.dump());
+    };
 
-// ── SSE ───────────────────────────────────────────────────────
-srv.sse("/api/stream",[&](int fd, const Req& req){
-    auto uid=sessions.getUid(getToken(req));
-    // check auth
-    {
-        std::lock_guard<std::mutex> lk(db.mtx);
-        if(uid.empty()||!db.findUser(uid)){
-            std::string r="HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            ::send(fd,r.c_str(),r.size(),MSG_NOSIGNAL); close(fd); return;
-        }
-    }
-    std::string hdr="HTTP/1.1 200 OK\r\n"
-                    "Content-Type: text/event-stream\r\n"
-                    "Cache-Control: no-cache\r\n"
-                    "Access-Control-Allow-Origin: *\r\n"
-                    "Connection: keep-alive\r\n\r\n"
-                    ": connected\n\n";
-    ::send(fd,hdr.c_str(),hdr.size(),MSG_NOSIGNAL);
-    sse.add(fd);
-    // keep thread alive until client disconnects (detected on next failed send)
-    while(true){
-        char tmp; int n=recv(fd,&tmp,1,MSG_PEEK);
-        if(n==0||n<0) break;
-        std::this_thread::sleep_for(std::chrono::seconds(5));
-    }
-    sse.remove(fd); close(fd);
-});
-
-// ── AUTH: register ────────────────────────────────────────────
-srv.route("POST","/api/auth/register",[&](const Req& req, Res& res){
-    auto body=parseJson(req.body);
-    auto name=body["name"].asStr(), room=body["room"].asStr();
-    auto uname=body["username"].asStr(), pw=body["password"].asStr();
-    auto email=body["email"].asStr(), phone=body["phone"].asStr();
-    if(name.empty()||room.empty()||uname.empty()||pw.empty())
-        { res.err(400,"Name, room number, username, and password are all required."); return; }
-    if(pw.size()<6){ res.err(400,"Password must be at least 6 characters."); return; }
-    {
-        std::lock_guard<std::mutex> lk(db.mtx);
-        if(db.findByUsername(uname)){ res.err(409,"That username is already taken."); return; }
-        User u; u.id=makeUID(); u.name=name; u.room=room; u.username=uname;
-        u.email=email; u.phone=phone;
-        u.salt=randomHex(16); u.hash=hashPw(pw,u.salt); u.role="resident"; u.createdAt=nowISO();
-        db.users.push_back(u); db.save();
-        auto tok=sessions.create(u.id);
-        Json r=Json::object(); r["token"]=Json(tok); r["user"]=toJ(u);
-        res.json(r.dump());
-        // welcome email
-        if(!email.empty())
-            mailer.sendAsync(email,name,"Welcome to the Residence Portal",
-                "Hi "+name+",\n\n"
-                "Welcome to the Residence Portal! Your account has been created.\n\n"
-                "Room: "+room+"\nUsername: "+uname+"\n\n"
-                "You can access the portal at any time to book laundry, equipment, and view events.\n\n"
-                "Best regards,\nResidence Management");
-    }
-});
-
-// ── AUTH: login ───────────────────────────────────────────────
-srv.route("POST","/api/auth/login",[&](const Req& req, Res& res){
-    auto body=parseJson(req.body);
-    auto uname=body["username"].asStr(), pw=body["password"].asStr();
-    if(uname.empty()||pw.empty()){ res.err(400,"Username and password required."); return; }
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* u=db.findByUsername(uname);
-    if(!u||hashPw(pw,u->salt)!=u->hash){ res.err(401,"Incorrect username or password."); return; }
-    auto tok=sessions.create(u->id);
-    Json r=Json::object(); r["token"]=Json(tok); r["user"]=toJ(*u);
-    res.json(r.dump());
-});
-
-// ── AUTH: logout ──────────────────────────────────────────────
-srv.route("POST","/api/auth/logout",[&](const Req& req, Res& res){
-    sessions.remove(getToken(req));
-    res.json("{\"success\":true}");
-});
-
-// ── AUTH: me ──────────────────────────────────────────────────
-srv.route("GET","/api/auth/me",[&](const Req& req, Res& res){
-    auto uid=sessions.getUid(getToken(req));
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* u=db.findUser(uid);
-    if(!u){ res.err(401,"Not logged in."); return; }
-    res.json(toJ(*u).dump());
-});
-
-// ── USERS (admin) ─────────────────────────────────────────────
-srv.route("GET","/api/users",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    res.json(toJArr(db.users).dump());
-});
-srv.route("DELETE","/api/users/:id",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto id=req.params.at("id");
-    if(id==me->id){ res.err(400,"Cannot delete your own account."); return; }
-    auto& v=db.users;
-    v.erase(std::remove_if(v.begin(),v.end(),[&](auto&u){return u.id==id;}),v.end());
-    db.save(); res.json("{\"success\":true}");
-});
-
-// ── NOTICES ───────────────────────────────────────────────────
-srv.route("GET","/api/notices",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    Json a=Json::array(); for(auto&n:db.notices) if(n.active) a.push(toJ(n));
-    res.json(a.dump());
-});
-srv.route("POST","/api/notices",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto body=parseJson(req.body);
-    Notice n; n.id=makeUID(); n.text=body["text"].asStr(); n.urgent=body["urgent"].asBool(); n.active=true;
-    db.notices.push_back(n); db.save(); bcNotices();
-    res.json(toJ(n).dump());
-    // broadcast to all residents with email
-    std::string subj=n.urgent?"⚠ Urgent Notice — Residence Portal":"📢 New Notice — Residence Portal";
-    std::string urgPfx=n.urgent?"[URGENT] ":"";
-    std::string emailBody="A new notice has been posted:\n\n"+urgPfx+n.text+
-        "\n\nView the portal for more details.\n\nResidence Management";
-    mailer.broadcast(db.users,subj,emailBody);
-});
-srv.route("DELETE","/api/notices/:id",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto id=req.params.at("id");
-    for(auto&n:db.notices) if(n.id==id) n.active=false;
-    db.save(); bcNotices(); res.json("{\"success\":true}");
-});
-
-// ── NEWS ──────────────────────────────────────────────────────
-srv.route("GET","/api/news",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto list=db.news;
-    std::sort(list.begin(),list.end(),[](auto&a,auto&b){return b.date<a.date;});
-    res.json(toJArr(list).dump());
-});
-srv.route("POST","/api/news",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto body=parseJson(req.body);
-    auto title=body["title"].asStr(), content=body["content"].asStr();
-    if(title.empty()||content.empty()){ res.err(400,"Title and content required."); return; }
-    NewsItem it; it.id=makeUID(); it.title=title;
-    it.date=body["date"].asStr().empty()?todayStr():body["date"].asStr();
-    it.category=body["category"].asStr().empty()?"General":body["category"].asStr();
-    it.content=content;
-    db.news.insert(db.news.begin(),it); db.save();
-    sse.broadcast("news",toJ(it).dump());
-    res.json(toJ(it).dump());
-});
-srv.route("DELETE","/api/news/:id",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto id=req.params.at("id");
-    auto& v=db.news;
-    v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
-    db.save(); sse.broadcast("news-deleted","{\"id\":\""+id+"\"}");
-    res.json("{\"success\":true}");
-});
-
-// ── EVENTS ────────────────────────────────────────────────────
-srv.route("GET","/api/events",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto list=db.events;
-    std::sort(list.begin(),list.end(),[](auto&a,auto&b){return a.date<b.date;});
-    res.json(toJArr(list).dump());
-});
-srv.route("POST","/api/events",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto body=parseJson(req.body);
-    if(body["name"].asStr().empty()||body["date"].asStr().empty())
-        { res.err(400,"Name and date required."); return; }
-    Event e; e.id=makeUID(); e.name=body["name"].asStr(); e.date=body["date"].asStr();
-    e.time_=body["time"].asStr().empty()?"00:00":body["time"].asStr();
-    e.description=body["description"].asStr();
-    e.location=body["location"].asStr().empty()?"TBD":body["location"].asStr();
-    e.maxParticipants=body["maxParticipants"].asInt()?body["maxParticipants"].asInt():20;
-    e.createdAt=todayStr();
-    db.events.push_back(e); db.save(); bcEvents();
-    res.json(toJ(e).dump());
-});
-srv.route("DELETE","/api/events/:id",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto id=req.params.at("id");
-    auto& v=db.events;
-    v.erase(std::remove_if(v.begin(),v.end(),[&](auto&e){return e.id==id;}),v.end());
-    db.save(); bcEvents(); res.json("{\"success\":true}");
-});
-// Event registration / cancellation
-srv.route("POST","/api/events/:id/register",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto id=req.params.at("id");
-    Event* e=db.findEvent(id);
-    if(!e){ res.err(404,"Event not found."); return; }
-    auto body=parseJson(req.body);
-    std::string label=me->name+" (Room "+me->room+")";
-    if(body["cancel"].asBool()){
-        auto& p=e->participants;
-        p.erase(std::remove(p.begin(),p.end(),label),p.end());
-    } else {
-        if((int)e->participants.size()>=e->maxParticipants)
-            { res.err(400,"This event is full."); return; }
-        if(std::find(e->participants.begin(),e->participants.end(),label)==e->participants.end())
-            e->participants.push_back(label);
-    }
-    db.save(); bcEvents(); res.json(toJ(*e).dump());
-});
-
-// ── LAUNDRY ───────────────────────────────────────────────────
-srv.route("GET","/api/laundry",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    res.json(toJArr(db.laundry).dump());
-});
-srv.route("POST","/api/laundry",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto body=parseJson(req.body);
-    auto mid=body["machineId"].asStr(), date=body["date"].asStr(), slot=body["slot"].asStr();
-    if(mid.empty()||date.empty()||slot.empty())
-        { res.err(400,"Machine, date, and slot required."); return; }
-    for(auto&b:db.laundry)
-        if(b.machineId==mid&&b.date==date&&b.slot==slot)
-            { res.err(409,"That slot is already booked."); return; }
-    LaundryBk bk; bk.id=makeUID(); bk.name=me->name; bk.room=me->room;
-    bk.userId=me->id; bk.machineId=mid; bk.date=date; bk.slot=slot; bk.createdAt=nowISO();
-    db.laundry.push_back(bk); db.save(); bcLaundry();
-    res.json(toJ(bk).dump());
-    if(!me->email.empty())
-        mailer.sendAsync(me->email,me->name,"🧺 Laundry Booking Confirmed",
-            "Hi "+me->name+",\n\nYour laundry booking is confirmed:\n\n"
-            "Machine: "+mid+"\nDate: "+date+"\nTime: "+slot+"\n\n"
-            "Remember the 10-minute rule — move your laundry promptly after the cycle ends.\n\n"
-            "Residence Management");
-});
-srv.route("DELETE","/api/laundry/:id",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto id=req.params.at("id");
-    LaundryBk* bk=db.findLaundry(id);
-    if(!bk){ res.err(404,"Not found."); return; }
-    if(me->role!="admin"&&bk->userId!=me->id)
-        { res.err(403,"You can only cancel your own bookings."); return; }
-    auto& v=db.laundry;
-    v.erase(std::remove_if(v.begin(),v.end(),[&](auto&b){return b.id==id;}),v.end());
-    db.save(); bcLaundry(); res.json("{\"success\":true}");
-});
-
-// ── EQUIPMENT ─────────────────────────────────────────────────
-srv.route("GET","/api/equip",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    res.json(toJArr(db.equip).dump());
-});
-srv.route("POST","/api/equip",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto body=parseJson(req.body);
-    auto item=body["item"].asStr(), date=body["date"].asStr();
-    auto startTime=body["startTime"].asStr(), endTime=body["endTime"].asStr();
-    if(item.empty()||date.empty()){ res.err(400,"Item and date required."); return; }
-    if(startTime.empty()) startTime="—";
-    if(endTime.empty())   endTime="—";
-    for(auto&b:db.equip)
-        if(b.userId==me->id&&b.item==item&&b.date==date)
-            { res.err(409,"You already have a booking for this item today (max 1 hour/day)."); return; }
-    EquipBk bk; bk.id=makeUID(); bk.name=me->name; bk.room=me->room;
-    bk.userId=me->id; bk.item=item; bk.date=date;
-    bk.startTime=startTime; bk.endTime=endTime;
-    bk.duration=60; bk.createdAt=nowISO();
-    db.equip.push_back(bk); db.save(); bcEquip();
-    res.json(toJ(bk).dump());
-    if(!me->email.empty())
-        mailer.sendAsync(me->email,me->name,"🔧 Equipment Booking Confirmed",
-            "Hi "+me->name+",\n\nYour equipment booking is confirmed:\n\n"
-            "Item: "+item+"\nDate: "+date+"\nTime: "+startTime+" – "+endTime+"\n\n"
-            "Please return the item promptly after use.\n\n"
-            "Residence Management");
-});
-srv.route("DELETE","/api/equip/:id",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto id=req.params.at("id");
-    EquipBk* bk=db.findEquip(id);
-    if(!bk){ res.err(404,"Not found."); return; }
-    if(me->role!="admin"&&bk->userId!=me->id)
-        { res.err(403,"You can only cancel your own bookings."); return; }
-    auto& v=db.equip;
-    v.erase(std::remove_if(v.begin(),v.end(),[&](auto&b){return b.id==id;}),v.end());
-    db.save(); bcEquip(); res.json("{\"success\":true}");
-});
-
-// ── MAINTENANCE ───────────────────────────────────────────────
-srv.route("GET","/api/maintenance",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    res.json(toJArr(db.maintenance).dump());
-});
-srv.route("POST","/api/maintenance",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto body=parseJson(req.body);
-    auto title=body["title"].asStr();
-    if(title.empty()){ res.err(400,"Title required."); return; }
-    MaintReq m; m.id=makeUID(); m.userId=me->id; m.name=me->name; m.room=me->room;
-    m.title=title; m.description=body["description"].asStr();
-    m.category=body["category"].asStr().empty()?"Other":body["category"].asStr();
-    m.status="open"; m.createdAt=nowISO();
-    db.maintenance.push_back(m); db.save();
-    res.json(toJ(m).dump());
-    // Email admin
-    for(auto&u:db.users){
-        if(u.role=="admin"&&!u.email.empty())
-            mailer.sendAsync(u.email,u.name,"🔧 New Maintenance Request",
-                "New request from "+me->name+" (Room "+me->room+"):\n\n"
-                "Title: "+title+"\nCategory: "+m.category+"\n"
-                "Details: "+m.description+"\n\nPlease check the admin panel.");
-    }
-});
-srv.route("POST","/api/maintenance/:id/status",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto id=req.params.at("id");
-    MaintReq* m=db.findMaint(id);
-    if(!m){ res.err(404,"Not found."); return; }
-    auto body=parseJson(req.body);
-    m->status=body["status"].asStr();
-    db.save();
-    // notify resident
-    User* resident=db.findUser(m->userId);
-    if(resident&&!resident->email.empty())
-        mailer.sendAsync(resident->email,resident->name,"🔧 Maintenance Update: "+m->title,
-            "Hi "+resident->name+",\n\nYour maintenance request has been updated:\n\n"
-            "Title: "+m->title+"\nNew Status: "+m->status+"\n\nResidence Management");
-    res.json(toJ(*m).dump());
-});
-srv.route("DELETE","/api/maintenance/:id",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto id=req.params.at("id");
-    auto& v=db.maintenance;
-    v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
-    db.save(); res.json("{\"success\":true}");
-});
-
-// ── PARCELS ───────────────────────────────────────────────────
-srv.route("GET","/api/parcels",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    res.json(toJArr(db.parcels).dump());
-});
-srv.route("POST","/api/parcels",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto body=parseJson(req.body);
-    auto rname=body["residentName"].asStr(), room=body["room"].asStr();
-    auto desc=body["description"].asStr();
-    if(rname.empty()||room.empty()||desc.empty()){ res.err(400,"Name, room and description required."); return; }
-    Parcel p; p.id=makeUID(); p.residentName=rname; p.room=room;
-    p.description=desc; p.carrier=body["carrier"].asStr();
-    p.collected=false; p.createdAt=nowISO();
-    db.parcels.push_back(p); db.save();
-    res.json(toJ(p).dump());
-    // email resident with matching room
-    for(auto&u:db.users){
-        if(toLower(u.room)==toLower(room)&&!u.email.empty())
-            mailer.sendAsync(u.email,u.name,"📦 You Have a Parcel!",
-                "Hi "+u.name+",\n\nA parcel has arrived for you:\n\n"
-                "Description: "+desc+"\n"+(p.carrier.empty()?"":"Carrier: "+p.carrier+"\n")+
-                "\nPlease collect it from the reception/entrance.\n\nResidence Management");
-    }
-});
-srv.route("POST","/api/parcels/:id/collect",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto id=req.params.at("id");
-    Parcel* p=db.findParcel(id);
-    if(!p){ res.err(404,"Not found."); return; }
-    p->collected=true; p->collectedAt=nowISO();
-    db.save(); res.json(toJ(*p).dump());
-});
-srv.route("DELETE","/api/parcels/:id",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto id=req.params.at("id");
-    auto& v=db.parcels;
-    v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
-    db.save(); res.json("{\"success\":true}");
-});
-
-// ── GUESTS ────────────────────────────────────────────────────
-srv.route("GET","/api/guests",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    res.json(toJArr(db.guests).dump());
-});
-srv.route("POST","/api/guests",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto body=parseJson(req.body);
-    auto gname=body["guestName"].asStr(), cin=body["checkIn"].asStr(), cout_=body["checkOut"].asStr();
-    if(gname.empty()||cin.empty()||cout_.empty()){ res.err(400,"All fields required."); return; }
-    Guest g; g.id=makeUID(); g.userId=me->id; g.residentName=me->name; g.room=me->room;
-    g.guestName=gname; g.checkIn=cin; g.checkOut=cout_; g.active=true; g.createdAt=nowISO();
-    db.guests.push_back(g); db.save();
-    res.json(toJ(g).dump());
-});
-srv.route("POST","/api/guests/:id/checkout",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto id=req.params.at("id");
-    Guest* g=db.findGuest(id);
-    if(!g){ res.err(404,"Not found."); return; }
-    if(me->role!="admin"&&g->userId!=me->id){ res.err(403,"Forbidden."); return; }
-    g->active=false; db.save(); res.json(toJ(*g).dump());
-});
-
-// ── LOST & FOUND ──────────────────────────────────────────────
-srv.route("GET","/api/lostfound",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    res.json(toJArr(db.lostfound).dump());
-});
-srv.route("POST","/api/lostfound",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto body=parseJson(req.body);
-    auto title=body["title"].asStr();
-    if(title.empty()){ res.err(400,"Title required."); return; }
-    LostFound l; l.id=makeUID(); l.userId=me->id; l.name=me->name; l.room=me->room;
-    l.type=body["type"].asStr().empty()?"lost":body["type"].asStr();
-    l.title=title; l.description=body["description"].asStr();
-    l.resolved=false; l.createdAt=nowISO();
-    db.lostfound.push_back(l); db.save();
-    res.json(toJ(l).dump());
-});
-srv.route("POST","/api/lostfound/:id/resolve",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto id=req.params.at("id");
-    LostFound* l=db.findLF(id);
-    if(!l){ res.err(404,"Not found."); return; }
-    if(me->role!="admin"&&l->userId!=me->id){ res.err(403,"Forbidden."); return; }
-    l->resolved=true; db.save(); res.json(toJ(*l).dump());
-});
-srv.route("DELETE","/api/lostfound/:id",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    if(me->role!="admin"){ res.err(403,"Admin only."); return; }
-    auto id=req.params.at("id");
-    auto& v=db.lostfound;
-    v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
-    db.save(); res.json("{\"success\":true}");
-});
-
-// ── PROFILE ───────────────────────────────────────────────────
-srv.route("POST","/api/profile",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto body=parseJson(req.body);
-    auto name=body["name"].asStr();
-    if(name.empty()){ res.err(400,"Name required."); return; }
-    me->name=name; me->email=body["email"].asStr(); me->phone=body["phone"].asStr();
-    db.save(); res.json(toJ(*me).dump());
-});
-srv.route("POST","/api/profile/password",[&](const Req& req, Res& res){
-    std::lock_guard<std::mutex> lk(db.mtx);
-    User* me=auth(req,res); if(!me) return;
-    auto body=parseJson(req.body);
-    auto oldPw=body["oldPassword"].asStr(), newPw=body["newPassword"].asStr();
-    if(oldPw.empty()||newPw.empty()){ res.err(400,"Both passwords required."); return; }
-    if(hashPw(oldPw,me->salt)!=me->hash){ res.err(401,"Current password is incorrect."); return; }
-    if(newPw.size()<6){ res.err(400,"Password must be at least 6 characters."); return; }
-    me->salt=randomHex(16); me->hash=hashPw(newPw,me->salt);
-    db.save(); res.json("{\"success\":true}");
-});
-
-// ── end routes ─────────────────────────────────────────────
-srv.setHtml(FRONTEND);
-
-// ── Equipment reminder background thread ──────────────────────
-// Tracks which reminders have already been sent to avoid duplicates
-std::set<std::string> sentReminders; // key = bookingId + ":10min" or ":overdue"
-std::mutex reminderMtx;
-
-std::thread([&](){
-    while(true){
-        std::this_thread::sleep_for(std::chrono::minutes(1));
-        try{
-            if(!mailer.enabled) continue;
-
-            // Get current time as HH:MM
-            std::time_t now=std::time(nullptr);
-            std::tm* tm=std::localtime(&now);
-            char timeBuf[6]; std::strftime(timeBuf,sizeof(timeBuf),"%H:%M",tm);
-            char dateBuf[11]; std::strftime(dateBuf,sizeof(dateBuf),"%Y-%m-%d",tm);
-            std::string nowTime=timeBuf, nowDate=dateBuf;
-
-            // Helper: parse "HH:MM" into minutes since midnight
-            auto toMins=[](const std::string& t) -> int {
-                if(t.size()<5||t[2]!=':') return -1;
-                try{ return std::stoi(t.substr(0,2))*60+std::stoi(t.substr(3,2)); }
-                catch(...){ return -1; }
-            };
-
-            int nowMins=toMins(nowTime);
-            if(nowMins<0) continue;
-
+    // ── SSE ───────────────────────────────────────────────────────
+    srv.sse("/api/stream",[&](int fd, const Req& req){
+        auto uid=sessions.getUid(getToken(req));
+        // check auth
+        {
             std::lock_guard<std::mutex> lk(db.mtx);
-            for(auto& bk : db.equip){
-                // Only check today's bookings with valid start/end times
-                if(bk.date!=nowDate) continue;
-                if(bk.startTime=="—"||bk.startTime.empty()) continue;
-                if(bk.endTime=="—"||bk.endTime.empty()) continue;
-
-                int startMins=toMins(bk.startTime);
-                int endMins=toMins(bk.endTime);
-                if(startMins<0||endMins<0) continue;
-
-                // Find the resident's email
-                User* u=db.findUser(bk.userId);
-                if(!u||u->email.empty()) continue;
-
-                // 10-minute warning: send when nowMins == endMins - 10
-                std::string key10=bk.id+":10min";
-                {
-                    std::lock_guard<std::mutex> rlk(reminderMtx);
-                    if(nowMins==endMins-10 && sentReminders.find(key10)==sentReminders.end()){
-                        sentReminders.insert(key10);
-                        mailer.sendAsync(u->email, u->name,
-                            "⏰ Equipment Return Reminder — 10 Minutes Left",
-                            "Hi "+u->name+",\n\n"
-                            "Your booking for "+bk.item+" ends in 10 minutes (at "+bk.endTime+").\n\n"
-                            "Please wrap up and return the item promptly so other residents can use it.\n\n"
-                            "Residence Management");
-                        std::cout<<"  Reminder: 10min warning sent to "<<u->name<<" for "<<bk.item<<"\n";
-                    }
-                }
-
-                // Overdue: send when nowMins == endMins (booking expired)
-                std::string keyOD=bk.id+":overdue";
-                {
-                    std::lock_guard<std::mutex> rlk(reminderMtx);
-                    if(nowMins==endMins && sentReminders.find(keyOD)==sentReminders.end()){
-                        sentReminders.insert(keyOD);
-                        mailer.sendAsync(u->email, u->name,
-                            "🚨 Equipment Booking Expired — Please Return Now",
-                            "Hi "+u->name+",\n\n"
-                            "Your 1-hour booking for "+bk.item+" has now expired (ended at "+bk.endTime+").\n\n"
-                            "Please return the item immediately so other residents can access it.\n\n"
-                            "Failure to return equipment on time may affect future booking privileges.\n\n"
-                            "Residence Management");
-                        std::cout<<"  Reminder: overdue notice sent to "<<u->name<<" for "<<bk.item<<"\n";
-                    }
-                }
+            if(uid.empty()||!db.findUser(uid)){
+                std::string r="HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                ::send(fd,r.c_str(),r.size(),MSG_NOSIGNAL); close(fd); return;
             }
-        } catch(...){
-            std::cerr<<"  Reminder thread error\n";
         }
-    }
-}).detach();
+        std::string hdr="HTTP/1.1 200 OK\r\n"
+                        "Content-Type: text/event-stream\r\n"
+                        "Cache-Control: no-cache\r\n"
+                        "Access-Control-Allow-Origin: *\r\n"
+                        "Connection: keep-alive\r\n\r\n"
+                        ": connected\n\n";
+        ::send(fd,hdr.c_str(),hdr.size(),MSG_NOSIGNAL);
+        sse.add(fd);
+        // keep thread alive until client disconnects (detected on next failed send)
+        while(true){
+            char tmp; int n=recv(fd,&tmp,1,MSG_PEEK);
+            if(n==0||n<0) break;
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+        }
+        sse.remove(fd); close(fd);
+    });
 
-std::cout<<"╠══════════════════════════════════════════╣\n";
-std::cout<<"║  Open:    http://localhost:"<<port<<"           ║\n";
-std::cout<<"║  Network: http://<your-ip>:"<<port<<"          ║\n";
-std::cout<<"║  Admin:   username=admin  pw=admin123    ║\n";
-std::cout<<"║  Ctrl+C to stop                          ║\n";
-std::cout<<"╚══════════════════════════════════════════╝\n\n";
+    // ── AUTH: register ────────────────────────────────────────────
+    srv.route("POST","/api/auth/register",[&](const Req& req, Res& res){
+        auto body=parseJson(req.body);
+        auto name=body["name"].asStr(), room=body["room"].asStr();
+        auto uname=body["username"].asStr(), pw=body["password"].asStr();
+        auto email=body["email"].asStr(), phone=body["phone"].asStr();
+        if(name.empty()||room.empty()||uname.empty()||pw.empty())
+            { res.err(400,"Name, room number, username, and password are all required."); return; }
+        if(pw.size()<6){ res.err(400,"Password must be at least 6 characters."); return; }
+        {
+            std::lock_guard<std::mutex> lk(db.mtx);
+            if(db.findByUsername(uname)){ res.err(409,"That username is already taken."); return; }
+            User u; u.id=makeUID(); u.name=name; u.room=room; u.username=uname;
+            u.email=email; u.phone=phone;
+            u.salt=randomHex(16); u.hash=hashPw(pw,u.salt); u.role="resident"; u.createdAt=nowISO();
+            db.users.push_back(u); db.save();
+            auto tok=sessions.create(u.id);
+            Json r=Json::object(); r["token"]=Json(tok); r["user"]=toJ(u);
+            res.json(r.dump());
+            // welcome email
+            if(!email.empty())
+                mailer.sendAsync(email,name,"Welcome to the Residence Portal",
+                    "Hi "+name+",\n\n"
+                    "Welcome to the Residence Portal! Your account has been created.\n\n"
+                    "Room: "+room+"\nUsername: "+uname+"\n\n"
+                    "You can access the portal at any time to book laundry, equipment, and view events.\n\n"
+                    "Best regards,\nResidence Management");
+        }
+    });
 
-srv.listen(port);
-return 0;
-```
+    // ── AUTH: login ───────────────────────────────────────────────
+    srv.route("POST","/api/auth/login",[&](const Req& req, Res& res){
+        auto body=parseJson(req.body);
+        auto uname=body["username"].asStr(), pw=body["password"].asStr();
+        if(uname.empty()||pw.empty()){ res.err(400,"Username and password required."); return; }
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* u=db.findByUsername(uname);
+        if(!u||hashPw(pw,u->salt)!=u->hash){ res.err(401,"Incorrect username or password."); return; }
+        auto tok=sessions.create(u->id);
+        Json r=Json::object(); r["token"]=Json(tok); r["user"]=toJ(*u);
+        res.json(r.dump());
+    });
 
+    // ── AUTH: logout ──────────────────────────────────────────────
+    srv.route("POST","/api/auth/logout",[&](const Req& req, Res& res){
+        sessions.remove(getToken(req));
+        res.json("{\"success\":true}");
+    });
+
+    // ── AUTH: me ──────────────────────────────────────────────────
+    srv.route("GET","/api/auth/me",[&](const Req& req, Res& res){
+        auto uid=sessions.getUid(getToken(req));
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* u=db.findUser(uid);
+        if(!u){ res.err(401,"Not logged in."); return; }
+        res.json(toJ(*u).dump());
+    });
+
+    // ── USERS (admin) ─────────────────────────────────────────────
+    srv.route("GET","/api/users",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        res.json(toJArr(db.users).dump());
+    });
+    srv.route("DELETE","/api/users/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        if(id==me->id){ res.err(400,"Cannot delete your own account."); return; }
+        auto& v=db.users;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&u){return u.id==id;}),v.end());
+        db.save(); res.json("{\"success\":true}");
+    });
+
+    // ── NOTICES ───────────────────────────────────────────────────
+    srv.route("GET","/api/notices",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        Json a=Json::array(); for(auto&n:db.notices) if(n.active) a.push(toJ(n));
+        res.json(a.dump());
+    });
+    srv.route("POST","/api/notices",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto body=parseJson(req.body);
+        Notice n; n.id=makeUID(); n.text=body["text"].asStr(); n.urgent=body["urgent"].asBool(); n.active=true;
+        db.notices.push_back(n); db.save(); bcNotices();
+        res.json(toJ(n).dump());
+        // broadcast to all residents with email
+        std::string subj=n.urgent?"⚠ Urgent Notice — Residence Portal":"📢 New Notice — Residence Portal";
+        std::string urgPfx=n.urgent?"[URGENT] ":"";
+        std::string emailBody="A new notice has been posted:\n\n"+urgPfx+n.text+
+            "\n\nView the portal for more details.\n\nResidence Management";
+        mailer.broadcast(db.users,subj,emailBody);
+    });
+    srv.route("DELETE","/api/notices/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        for(auto&n:db.notices) if(n.id==id) n.active=false;
+        db.save(); bcNotices(); res.json("{\"success\":true}");
+    });
+
+    // ── NEWS ──────────────────────────────────────────────────────
+    srv.route("GET","/api/news",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto list=db.news;
+        std::sort(list.begin(),list.end(),[](auto&a,auto&b){return b.date<a.date;});
+        res.json(toJArr(list).dump());
+    });
+    srv.route("POST","/api/news",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto body=parseJson(req.body);
+        auto title=body["title"].asStr(), content=body["content"].asStr();
+        if(title.empty()||content.empty()){ res.err(400,"Title and content required."); return; }
+        NewsItem it; it.id=makeUID(); it.title=title;
+        it.date=body["date"].asStr().empty()?todayStr():body["date"].asStr();
+        it.category=body["category"].asStr().empty()?"General":body["category"].asStr();
+        it.content=content;
+        db.news.insert(db.news.begin(),it); db.save();
+        sse.broadcast("news",toJ(it).dump());
+        res.json(toJ(it).dump());
+    });
+    srv.route("DELETE","/api/news/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        auto& v=db.news;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
+        db.save(); sse.broadcast("news-deleted","{\"id\":\""+id+"\"}");
+        res.json("{\"success\":true}");
+    });
+
+    // ── EVENTS ────────────────────────────────────────────────────
+    srv.route("GET","/api/events",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto list=db.events;
+        std::sort(list.begin(),list.end(),[](auto&a,auto&b){return a.date<b.date;});
+        res.json(toJArr(list).dump());
+    });
+    srv.route("POST","/api/events",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto body=parseJson(req.body);
+        if(body["name"].asStr().empty()||body["date"].asStr().empty())
+            { res.err(400,"Name and date required."); return; }
+        Event e; e.id=makeUID(); e.name=body["name"].asStr(); e.date=body["date"].asStr();
+        e.time_=body["time"].asStr().empty()?"00:00":body["time"].asStr();
+        e.description=body["description"].asStr();
+        e.location=body["location"].asStr().empty()?"TBD":body["location"].asStr();
+        e.maxParticipants=body["maxParticipants"].asInt()?body["maxParticipants"].asInt():20;
+        e.createdAt=todayStr();
+        db.events.push_back(e); db.save(); bcEvents();
+        res.json(toJ(e).dump());
+    });
+    srv.route("DELETE","/api/events/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        auto& v=db.events;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&e){return e.id==id;}),v.end());
+        db.save(); bcEvents(); res.json("{\"success\":true}");
+    });
+    // Event registration / cancellation
+    srv.route("POST","/api/events/:id/register",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto id=req.params.at("id");
+        Event* e=db.findEvent(id);
+        if(!e){ res.err(404,"Event not found."); return; }
+        auto body=parseJson(req.body);
+        std::string label=me->name+" (Room "+me->room+")";
+        if(body["cancel"].asBool()){
+            auto& p=e->participants;
+            p.erase(std::remove(p.begin(),p.end(),label),p.end());
+        } else {
+            if((int)e->participants.size()>=e->maxParticipants)
+                { res.err(400,"This event is full."); return; }
+            if(std::find(e->participants.begin(),e->participants.end(),label)==e->participants.end())
+                e->participants.push_back(label);
+        }
+        db.save(); bcEvents(); res.json(toJ(*e).dump());
+    });
+
+    // ── LAUNDRY ───────────────────────────────────────────────────
+    srv.route("GET","/api/laundry",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.laundry).dump());
+    });
+    srv.route("POST","/api/laundry",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto mid=body["machineId"].asStr(), date=body["date"].asStr(), slot=body["slot"].asStr();
+        if(mid.empty()||date.empty()||slot.empty())
+            { res.err(400,"Machine, date, and slot required."); return; }
+        for(auto&b:db.laundry)
+            if(b.machineId==mid&&b.date==date&&b.slot==slot)
+                { res.err(409,"That slot is already booked."); return; }
+        LaundryBk bk; bk.id=makeUID(); bk.name=me->name; bk.room=me->room;
+        bk.userId=me->id; bk.machineId=mid; bk.date=date; bk.slot=slot; bk.createdAt=nowISO();
+        db.laundry.push_back(bk); db.save(); bcLaundry();
+        res.json(toJ(bk).dump());
+        if(!me->email.empty())
+            mailer.sendAsync(me->email,me->name,"🧺 Laundry Booking Confirmed",
+                "Hi "+me->name+",\n\nYour laundry booking is confirmed:\n\n"
+                "Machine: "+mid+"\nDate: "+date+"\nTime: "+slot+"\n\n"
+                "Remember the 10-minute rule — move your laundry promptly after the cycle ends.\n\n"
+                "Residence Management");
+    });
+    srv.route("DELETE","/api/laundry/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto id=req.params.at("id");
+        LaundryBk* bk=db.findLaundry(id);
+        if(!bk){ res.err(404,"Not found."); return; }
+        if(me->role!="admin"&&bk->userId!=me->id)
+            { res.err(403,"You can only cancel your own bookings."); return; }
+        auto& v=db.laundry;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&b){return b.id==id;}),v.end());
+        db.save(); bcLaundry(); res.json("{\"success\":true}");
+    });
+
+    // ── EQUIPMENT ─────────────────────────────────────────────────
+    srv.route("GET","/api/equip",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.equip).dump());
+    });
+    srv.route("POST","/api/equip",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto item=body["item"].asStr(), date=body["date"].asStr();
+        auto startTime=body["startTime"].asStr(), endTime=body["endTime"].asStr();
+        if(item.empty()||date.empty()){ res.err(400,"Item and date required."); return; }
+        if(startTime.empty()) startTime="—";
+        if(endTime.empty())   endTime="—";
+        for(auto&b:db.equip)
+            if(b.userId==me->id&&b.item==item&&b.date==date)
+                { res.err(409,"You already have a booking for this item today (max 1 hour/day)."); return; }
+        EquipBk bk; bk.id=makeUID(); bk.name=me->name; bk.room=me->room;
+        bk.userId=me->id; bk.item=item; bk.date=date;
+        bk.startTime=startTime; bk.endTime=endTime;
+        bk.duration=60; bk.createdAt=nowISO();
+        db.equip.push_back(bk); db.save(); bcEquip();
+        res.json(toJ(bk).dump());
+        if(!me->email.empty())
+            mailer.sendAsync(me->email,me->name,"🔧 Equipment Booking Confirmed",
+                "Hi "+me->name+",\n\nYour equipment booking is confirmed:\n\n"
+                "Item: "+item+"\nDate: "+date+"\nTime: "+startTime+" – "+endTime+"\n\n"
+                "Please return the item promptly after use.\n\n"
+                "Residence Management");
+    });
+    srv.route("DELETE","/api/equip/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto id=req.params.at("id");
+        EquipBk* bk=db.findEquip(id);
+        if(!bk){ res.err(404,"Not found."); return; }
+        if(me->role!="admin"&&bk->userId!=me->id)
+            { res.err(403,"You can only cancel your own bookings."); return; }
+        auto& v=db.equip;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&b){return b.id==id;}),v.end());
+        db.save(); bcEquip(); res.json("{\"success\":true}");
+    });
+
+    // ── MAINTENANCE ───────────────────────────────────────────────
+    srv.route("GET","/api/maintenance",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.maintenance).dump());
+    });
+    srv.route("POST","/api/maintenance",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto title=body["title"].asStr();
+        if(title.empty()){ res.err(400,"Title required."); return; }
+        MaintReq m; m.id=makeUID(); m.userId=me->id; m.name=me->name; m.room=me->room;
+        m.title=title; m.description=body["description"].asStr();
+        m.category=body["category"].asStr().empty()?"Other":body["category"].asStr();
+        m.status="open"; m.createdAt=nowISO();
+        db.maintenance.push_back(m); db.save();
+        res.json(toJ(m).dump());
+        // Email admin
+        for(auto&u:db.users){
+            if(u.role=="admin"&&!u.email.empty())
+                mailer.sendAsync(u.email,u.name,"🔧 New Maintenance Request",
+                    "New request from "+me->name+" (Room "+me->room+"):\n\n"
+                    "Title: "+title+"\nCategory: "+m.category+"\n"
+                    "Details: "+m.description+"\n\nPlease check the admin panel.");
+        }
+    });
+    srv.route("POST","/api/maintenance/:id/status",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        MaintReq* m=db.findMaint(id);
+        if(!m){ res.err(404,"Not found."); return; }
+        auto body=parseJson(req.body);
+        m->status=body["status"].asStr();
+        db.save();
+        // notify resident
+        User* resident=db.findUser(m->userId);
+        if(resident&&!resident->email.empty())
+            mailer.sendAsync(resident->email,resident->name,"🔧 Maintenance Update: "+m->title,
+                "Hi "+resident->name+",\n\nYour maintenance request has been updated:\n\n"
+                "Title: "+m->title+"\nNew Status: "+m->status+"\n\nResidence Management");
+        res.json(toJ(*m).dump());
+    });
+    srv.route("DELETE","/api/maintenance/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        auto& v=db.maintenance;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
+        db.save(); res.json("{\"success\":true}");
+    });
+
+    // ── PARCELS ───────────────────────────────────────────────────
+    srv.route("GET","/api/parcels",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.parcels).dump());
+    });
+    srv.route("POST","/api/parcels",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto body=parseJson(req.body);
+        auto rname=body["residentName"].asStr(), room=body["room"].asStr();
+        auto desc=body["description"].asStr();
+        if(rname.empty()||room.empty()||desc.empty()){ res.err(400,"Name, room and description required."); return; }
+        Parcel p; p.id=makeUID(); p.residentName=rname; p.room=room;
+        p.description=desc; p.carrier=body["carrier"].asStr();
+        p.collected=false; p.createdAt=nowISO();
+        db.parcels.push_back(p); db.save();
+        res.json(toJ(p).dump());
+        // email resident with matching room
+        for(auto&u:db.users){
+            if(toLower(u.room)==toLower(room)&&!u.email.empty())
+                mailer.sendAsync(u.email,u.name,"📦 You Have a Parcel!",
+                    "Hi "+u.name+",\n\nA parcel has arrived for you:\n\n"
+                    "Description: "+desc+"\n"+(p.carrier.empty()?"":"Carrier: "+p.carrier+"\n")+
+                    "\nPlease collect it from the reception/entrance.\n\nResidence Management");
+        }
+    });
+    srv.route("POST","/api/parcels/:id/collect",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto id=req.params.at("id");
+        Parcel* p=db.findParcel(id);
+        if(!p){ res.err(404,"Not found."); return; }
+        p->collected=true; p->collectedAt=nowISO();
+        db.save(); res.json(toJ(*p).dump());
+    });
+    srv.route("DELETE","/api/parcels/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        auto& v=db.parcels;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
+        db.save(); res.json("{\"success\":true}");
+    });
+
+    // ── GUESTS ────────────────────────────────────────────────────
+    srv.route("GET","/api/guests",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.guests).dump());
+    });
+    srv.route("POST","/api/guests",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto gname=body["guestName"].asStr(), cin=body["checkIn"].asStr(), cout_=body["checkOut"].asStr();
+        if(gname.empty()||cin.empty()||cout_.empty()){ res.err(400,"All fields required."); return; }
+        Guest g; g.id=makeUID(); g.userId=me->id; g.residentName=me->name; g.room=me->room;
+        g.guestName=gname; g.checkIn=cin; g.checkOut=cout_; g.active=true; g.createdAt=nowISO();
+        db.guests.push_back(g); db.save();
+        res.json(toJ(g).dump());
+    });
+    srv.route("POST","/api/guests/:id/checkout",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto id=req.params.at("id");
+        Guest* g=db.findGuest(id);
+        if(!g){ res.err(404,"Not found."); return; }
+        if(me->role!="admin"&&g->userId!=me->id){ res.err(403,"Forbidden."); return; }
+        g->active=false; db.save(); res.json(toJ(*g).dump());
+    });
+
+    // ── LOST & FOUND ──────────────────────────────────────────────
+    srv.route("GET","/api/lostfound",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.lostfound).dump());
+    });
+    srv.route("POST","/api/lostfound",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto title=body["title"].asStr();
+        if(title.empty()){ res.err(400,"Title required."); return; }
+        LostFound l; l.id=makeUID(); l.userId=me->id; l.name=me->name; l.room=me->room;
+        l.type=body["type"].asStr().empty()?"lost":body["type"].asStr();
+        l.title=title; l.description=body["description"].asStr();
+        l.resolved=false; l.createdAt=nowISO();
+        db.lostfound.push_back(l); db.save();
+        res.json(toJ(l).dump());
+    });
+    srv.route("POST","/api/lostfound/:id/resolve",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto id=req.params.at("id");
+        LostFound* l=db.findLF(id);
+        if(!l){ res.err(404,"Not found."); return; }
+        if(me->role!="admin"&&l->userId!=me->id){ res.err(403,"Forbidden."); return; }
+        l->resolved=true; db.save(); res.json(toJ(*l).dump());
+    });
+    srv.route("DELETE","/api/lostfound/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        auto& v=db.lostfound;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
+        db.save(); res.json("{\"success\":true}");
+    });
+
+    // ── PROFILE ───────────────────────────────────────────────────
+    srv.route("POST","/api/profile",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto name=body["name"].asStr();
+        if(name.empty()){ res.err(400,"Name required."); return; }
+        me->name=name; me->email=body["email"].asStr(); me->phone=body["phone"].asStr();
+        db.save(); res.json(toJ(*me).dump());
+    });
+    srv.route("POST","/api/profile/password",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto oldPw=body["oldPassword"].asStr(), newPw=body["newPassword"].asStr();
+        if(oldPw.empty()||newPw.empty()){ res.err(400,"Both passwords required."); return; }
+        if(hashPw(oldPw,me->salt)!=me->hash){ res.err(401,"Current password is incorrect."); return; }
+        if(newPw.size()<6){ res.err(400,"Password must be at least 6 characters."); return; }
+        me->salt=randomHex(16); me->hash=hashPw(newPw,me->salt);
+        db.save(); res.json("{\"success\":true}");
+    });
+
+    // ── end routes ─────────────────────────────────────────────
+    srv.setHtml(FRONTEND);
+
+    // ── Equipment reminder background thread ──────────────────────
+    // Tracks which reminders have already been sent to avoid duplicates
+    std::set<std::string> sentReminders; // key = bookingId + ":10min" or ":overdue"
+    std::mutex reminderMtx;
+
+    std::thread([&](){
+        while(true){
+            std::this_thread::sleep_for(std::chrono::minutes(1));
+            try{
+                if(!mailer.enabled) continue;
+
+                // Get current time as HH:MM
+                std::time_t now=std::time(nullptr);
+                std::tm* tm=std::localtime(&now);
+                char timeBuf[6]; std::strftime(timeBuf,sizeof(timeBuf),"%H:%M",tm);
+                char dateBuf[11]; std::strftime(dateBuf,sizeof(dateBuf),"%Y-%m-%d",tm);
+                std::string nowTime=timeBuf, nowDate=dateBuf;
+
+                // Helper: parse "HH:MM" into minutes since midnight
+                auto toMins=[](const std::string& t) -> int {
+                    if(t.size()<5||t[2]!=':') return -1;
+                    try{ return std::stoi(t.substr(0,2))*60+std::stoi(t.substr(3,2)); }
+                    catch(...){ return -1; }
+                };
+
+                int nowMins=toMins(nowTime);
+                if(nowMins<0) continue;
+
+                std::lock_guard<std::mutex> lk(db.mtx);
+                for(auto& bk : db.equip){
+                    // Only check today's bookings with valid start/end times
+                    if(bk.date!=nowDate) continue;
+                    if(bk.startTime=="—"||bk.startTime.empty()) continue;
+                    if(bk.endTime=="—"||bk.endTime.empty()) continue;
+
+                    int startMins=toMins(bk.startTime);
+                    int endMins=toMins(bk.endTime);
+                    if(startMins<0||endMins<0) continue;
+
+                    // Find the resident's email
+                    User* u=db.findUser(bk.userId);
+                    if(!u||u->email.empty()) continue;
+
+                    // 10-minute warning: send when nowMins == endMins - 10
+                    std::string key10=bk.id+":10min";
+                    {
+                        std::lock_guard<std::mutex> rlk(reminderMtx);
+                        if(nowMins==endMins-10 && sentReminders.find(key10)==sentReminders.end()){
+                            sentReminders.insert(key10);
+                            mailer.sendAsync(u->email, u->name,
+                                "⏰ Equipment Return Reminder — 10 Minutes Left",
+                                "Hi "+u->name+",\n\n"
+                                "Your booking for "+bk.item+" ends in 10 minutes (at "+bk.endTime+").\n\n"
+                                "Please wrap up and return the item promptly so other residents can use it.\n\n"
+                                "Residence Management");
+                            std::cout<<"  Reminder: 10min warning sent to "<<u->name<<" for "<<bk.item<<"\n";
+                        }
+                    }
+
+                    // Overdue: send when nowMins == endMins (booking expired)
+                    std::string keyOD=bk.id+":overdue";
+                    {
+                        std::lock_guard<std::mutex> rlk(reminderMtx);
+                        if(nowMins==endMins && sentReminders.find(keyOD)==sentReminders.end()){
+                            sentReminders.insert(keyOD);
+                            mailer.sendAsync(u->email, u->name,
+                                "🚨 Equipment Booking Expired — Please Return Now",
+                                "Hi "+u->name+",\n\n"
+                                "Your 1-hour booking for "+bk.item+" has now expired (ended at "+bk.endTime+").\n\n"
+                                "Please return the item immediately so other residents can access it.\n\n"
+                                "Failure to return equipment on time may affect future booking privileges.\n\n"
+                                "Residence Management");
+                            std::cout<<"  Reminder: overdue notice sent to "<<u->name<<" for "<<bk.item<<"\n";
+                        }
+                    }
+                }
+            } catch(...){
+                std::cerr<<"  Reminder thread error\n";
+            }
+        }
+    }).detach();
+
+    std::cout<<"╠══════════════════════════════════════════╣\n";
+    std::cout<<"║  Open:    http://localhost:"<<port<<"           ║\n";
+    std::cout<<"║  Network: http://<your-ip>:"<<port<<"          ║\n";
+    std::cout<<"║  Admin:   username=admin  pw=admin123    ║\n";
+    std::cout<<"║  Ctrl+C to stop                          ║\n";
+    std::cout<<"╚══════════════════════════════════════════╝\n\n";
+
+    srv.listen(port);
+    return 0;
 }
