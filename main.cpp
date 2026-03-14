@@ -308,6 +308,10 @@ struct Event     {
 };
 struct LaundryBk { std::string id,name,room,userId,machineId,date,slot,createdAt; };
 struct EquipBk   { std::string id,name,room,userId,item,date,startTime,endTime,createdAt; int duration=60; };
+struct MaintReq  { std::string id,userId,name,room,title,description,category,status,createdAt; };
+struct Parcel    { std::string id,residentName,room,description,carrier,collectedAt,createdAt; bool collected=false; };
+struct Guest     { std::string id,userId,residentName,room,guestName,checkIn,checkOut,createdAt; bool active=true; };
+struct LostFound { std::string id,userId,name,room,type,title,description,createdAt; bool resolved=false; };
 
 // ═══════════════════════════════════════════════════════════════════
 //  §5  JSON serialisers
@@ -355,6 +359,37 @@ static Json toJ(const EquipBk& b){
     j["duration"]=Json((long long)b.duration); j["createdAt"]=Json(b.createdAt);
     return j;
 }
+static Json toJ(const MaintReq& m){
+    Json j=Json::object();
+    j["id"]=Json(m.id); j["userId"]=Json(m.userId); j["name"]=Json(m.name);
+    j["room"]=Json(m.room); j["title"]=Json(m.title); j["description"]=Json(m.description);
+    j["category"]=Json(m.category); j["status"]=Json(m.status); j["createdAt"]=Json(m.createdAt);
+    return j;
+}
+static Json toJ(const Parcel& p){
+    Json j=Json::object();
+    j["id"]=Json(p.id); j["residentName"]=Json(p.residentName); j["room"]=Json(p.room);
+    j["description"]=Json(p.description); j["carrier"]=Json(p.carrier);
+    j["collected"]=Json(p.collected); j["collectedAt"]=Json(p.collectedAt);
+    j["createdAt"]=Json(p.createdAt);
+    return j;
+}
+static Json toJ(const Guest& g){
+    Json j=Json::object();
+    j["id"]=Json(g.id); j["userId"]=Json(g.userId); j["residentName"]=Json(g.residentName);
+    j["room"]=Json(g.room); j["guestName"]=Json(g.guestName);
+    j["checkIn"]=Json(g.checkIn); j["checkOut"]=Json(g.checkOut);
+    j["active"]=Json(g.active); j["createdAt"]=Json(g.createdAt);
+    return j;
+}
+static Json toJ(const LostFound& l){
+    Json j=Json::object();
+    j["id"]=Json(l.id); j["userId"]=Json(l.userId); j["name"]=Json(l.name);
+    j["room"]=Json(l.room); j["type"]=Json(l.type); j["title"]=Json(l.title);
+    j["description"]=Json(l.description); j["resolved"]=Json(l.resolved);
+    j["createdAt"]=Json(l.createdAt);
+    return j;
+}
 
 template<typename T>
 static Json toJArr(const std::vector<T>& v){
@@ -391,6 +426,10 @@ public:
     std::vector<Event>     events;
     std::vector<LaundryBk> laundry;
     std::vector<EquipBk>   equip;
+    std::vector<MaintReq>  maintenance;
+    std::vector<Parcel>    parcels;
+    std::vector<Guest>     guests;
+    std::vector<LostFound> lostfound;
     std::mutex             mtx;
     PGconn*                pg_=nullptr;
 
@@ -401,6 +440,10 @@ public:
     Event*     findEvent(const std::string& id)  { for(auto&e:events)  if(e.id==id)       return &e; return nullptr; }
     LaundryBk* findLaundry(const std::string& id){ for(auto&b:laundry) if(b.id==id)       return &b; return nullptr; }
     EquipBk*   findEquip(const std::string& id)  { for(auto&b:equip)   if(b.id==id)       return &b; return nullptr; }
+    MaintReq*  findMaint(const std::string& id)  { for(auto&m:maintenance) if(m.id==id)   return &m; return nullptr; }
+    Parcel*    findParcel(const std::string& id) { for(auto&p:parcels) if(p.id==id)       return &p; return nullptr; }
+    Guest*     findGuest(const std::string& id)  { for(auto&g:guests)  if(g.id==id)       return &g; return nullptr; }
+    LostFound* findLF(const std::string& id)     { for(auto&l:lostfound) if(l.id==id)     return &l; return nullptr; }
 
     // ── PG exec helpers ──────────────────────────────────────────
     bool exec(const std::string& sql){
@@ -436,6 +479,18 @@ public:
             id TEXT PRIMARY KEY, name TEXT, room TEXT, user_id TEXT,
             item TEXT, date TEXT, start_time TEXT, end_time TEXT,
             duration INT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS maintenance(
+            id TEXT PRIMARY KEY, user_id TEXT, name TEXT, room TEXT,
+            title TEXT, description TEXT, category TEXT, status TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS parcels(
+            id TEXT PRIMARY KEY, resident_name TEXT, room TEXT, description TEXT,
+            carrier TEXT, collected BOOLEAN, collected_at TEXT, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS guests(
+            id TEXT PRIMARY KEY, user_id TEXT, resident_name TEXT, room TEXT,
+            guest_name TEXT, check_in TEXT, check_out TEXT, active BOOLEAN, created_at TEXT))");
+        exec(R"(CREATE TABLE IF NOT EXISTS lostfound(
+            id TEXT PRIMARY KEY, user_id TEXT, name TEXT, room TEXT,
+            type TEXT, title TEXT, description TEXT, resolved BOOLEAN, created_at TEXT))");
     }
 
     // ── Save: write entire in-memory state to PG ─────────────────
@@ -488,6 +543,38 @@ public:
                  pgEsc(pg_,b.room)+","+pgEsc(pg_,b.userId)+","+pgEsc(pg_,b.item)+","+
                  pgEsc(pg_,b.date)+","+pgEsc(pg_,b.startTime)+","+pgEsc(pg_,b.endTime)+","+
                  std::to_string(b.duration)+","+pgEsc(pg_,b.createdAt)+")");
+        }
+        // maintenance
+        exec("DELETE FROM maintenance");
+        for(auto&m:maintenance){
+            exec("INSERT INTO maintenance VALUES("+pgEsc(pg_,m.id)+","+pgEsc(pg_,m.userId)+","+
+                 pgEsc(pg_,m.name)+","+pgEsc(pg_,m.room)+","+pgEsc(pg_,m.title)+","+
+                 pgEsc(pg_,m.description)+","+pgEsc(pg_,m.category)+","+pgEsc(pg_,m.status)+","+
+                 pgEsc(pg_,m.createdAt)+")");
+        }
+        // parcels
+        exec("DELETE FROM parcels");
+        for(auto&p:parcels){
+            std::string col=p.collected?"true":"false";
+            exec("INSERT INTO parcels VALUES("+pgEsc(pg_,p.id)+","+pgEsc(pg_,p.residentName)+","+
+                 pgEsc(pg_,p.room)+","+pgEsc(pg_,p.description)+","+pgEsc(pg_,p.carrier)+","+
+                 col+","+pgEsc(pg_,p.collectedAt)+","+pgEsc(pg_,p.createdAt)+")");
+        }
+        // guests
+        exec("DELETE FROM guests");
+        for(auto&g:guests){
+            std::string act=g.active?"true":"false";
+            exec("INSERT INTO guests VALUES("+pgEsc(pg_,g.id)+","+pgEsc(pg_,g.userId)+","+
+                 pgEsc(pg_,g.residentName)+","+pgEsc(pg_,g.room)+","+pgEsc(pg_,g.guestName)+","+
+                 pgEsc(pg_,g.checkIn)+","+pgEsc(pg_,g.checkOut)+","+act+","+pgEsc(pg_,g.createdAt)+")");
+        }
+        // lostfound
+        exec("DELETE FROM lostfound");
+        for(auto&l:lostfound){
+            std::string res=l.resolved?"true":"false";
+            exec("INSERT INTO lostfound VALUES("+pgEsc(pg_,l.id)+","+pgEsc(pg_,l.userId)+","+
+                 pgEsc(pg_,l.name)+","+pgEsc(pg_,l.room)+","+pgEsc(pg_,l.type)+","+
+                 pgEsc(pg_,l.title)+","+pgEsc(pg_,l.description)+","+res+","+pgEsc(pg_,l.createdAt)+")");
         }
     }
 
@@ -561,6 +648,42 @@ public:
             b.duration=std::stoi(pgStr(r,i,8).empty()?"60":pgStr(r,i,8));
             b.createdAt=pgStr(r,i,9);
             equip.push_back(b);
+        } PQclear(r);}
+
+        // maintenance
+        {auto* r=query("SELECT id,user_id,name,room,title,description,category,status,created_at FROM maintenance ORDER BY created_at DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            MaintReq m; m.id=pgStr(r,i,0); m.userId=pgStr(r,i,1); m.name=pgStr(r,i,2);
+            m.room=pgStr(r,i,3); m.title=pgStr(r,i,4); m.description=pgStr(r,i,5);
+            m.category=pgStr(r,i,6); m.status=pgStr(r,i,7); m.createdAt=pgStr(r,i,8);
+            maintenance.push_back(m);
+        } PQclear(r);}
+
+        // parcels
+        {auto* r=query("SELECT id,resident_name,room,description,carrier,collected,collected_at,created_at FROM parcels ORDER BY created_at DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            Parcel p; p.id=pgStr(r,i,0); p.residentName=pgStr(r,i,1); p.room=pgStr(r,i,2);
+            p.description=pgStr(r,i,3); p.carrier=pgStr(r,i,4);
+            p.collected=pgBool(r,i,5); p.collectedAt=pgStr(r,i,6); p.createdAt=pgStr(r,i,7);
+            parcels.push_back(p);
+        } PQclear(r);}
+
+        // guests
+        {auto* r=query("SELECT id,user_id,resident_name,room,guest_name,check_in,check_out,active,created_at FROM guests ORDER BY created_at DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            Guest g; g.id=pgStr(r,i,0); g.userId=pgStr(r,i,1); g.residentName=pgStr(r,i,2);
+            g.room=pgStr(r,i,3); g.guestName=pgStr(r,i,4); g.checkIn=pgStr(r,i,5);
+            g.checkOut=pgStr(r,i,6); g.active=pgBool(r,i,7); g.createdAt=pgStr(r,i,8);
+            guests.push_back(g);
+        } PQclear(r);}
+
+        // lostfound
+        {auto* r=query("SELECT id,user_id,name,room,type,title,description,resolved,created_at FROM lostfound ORDER BY created_at DESC");
+        for(int i=0;i<PQntuples(r);i++){
+            LostFound l; l.id=pgStr(r,i,0); l.userId=pgStr(r,i,1); l.name=pgStr(r,i,2);
+            l.room=pgStr(r,i,3); l.type=pgStr(r,i,4); l.title=pgStr(r,i,5);
+            l.description=pgStr(r,i,6); l.resolved=pgBool(r,i,7); l.createdAt=pgStr(r,i,8);
+            lostfound.push_back(l);
         } PQclear(r);}
 
         ensureAdmin();
@@ -1287,6 +1410,11 @@ tbody td:first-child{color:var(--slate);font-weight:500}
       <button class="nb"        onclick="showPage('events')"    data-page="events">Events</button>
       <button class="nb"        onclick="showPage('laundry')"   data-page="laundry">Laundry</button>
       <button class="nb"        onclick="showPage('equip')"     data-page="equip">Equipment</button>
+      <button class="nb"        onclick="showPage('maintenance')" data-page="maintenance">🔧 Maintenance</button>
+      <button class="nb"        onclick="showPage('parcels')"   data-page="parcels">📦 Parcels</button>
+      <button class="nb"        onclick="showPage('guests')"    data-page="guests">🏠 Guests</button>
+      <button class="nb"        onclick="showPage('lostfound')" data-page="lostfound">🔍 Lost & Found</button>
+      <button class="nb"        onclick="showPage('profile')"   data-page="profile">👤 Profile</button>
       <button class="nb" id="admin-btn" onclick="showPage('admin')" data-page="admin" style="display:none">⚙ Admin</button>
     </nav>
     <div id="user-area">
@@ -1532,6 +1660,170 @@ tbody td:first-child{color:var(--slate);font-weight:500}
           <thead><tr><th>Name</th><th>Room</th><th>Item</th><th>Date</th><th>From</th><th>Until</th><th></th></tr></thead>
           <tbody id="adm-eq"></tbody>
         </table></div>
+      </div>
+
+      <div class="adm">
+        <h3>🔧 Maintenance Requests</h3>
+        <div class="tw"><table>
+          <thead><tr><th>Name</th><th>Room</th><th>Title</th><th>Category</th><th>Status</th><th>Date</th><th></th></tr></thead>
+          <tbody id="adm-maint"></tbody>
+        </table></div>
+      </div>
+
+      <div class="adm">
+        <h3>📦 Log Incoming Parcel</h3>
+        <div class="fr">
+          <div class="fg"><label>Resident Name</label><input id="adm-pname" placeholder="Resident's full name"></div>
+          <div class="fg"><label>Room</label><input id="adm-proom" placeholder="Room number"></div>
+        </div>
+        <div class="fr">
+          <div class="fg"><label>Description</label><input id="adm-pdesc" placeholder="e.g. Amazon parcel, large box"></div>
+          <div class="fg"><label>Carrier</label><input id="adm-pcarrier" placeholder="e.g. DHL, DPD, Hermes"></div>
+        </div>
+        <button class="btn btn-p btn-sm" onclick="logParcel()">Log Parcel</button>
+        <div class="divider"></div>
+        <div class="tw"><table>
+          <thead><tr><th>Name</th><th>Room</th><th>Description</th><th>Carrier</th><th>Arrived</th><th>Status</th><th></th></tr></thead>
+          <tbody id="adm-parcels"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- MAINTENANCE -->
+    <div class="page" id="page-maintenance">
+      <div class="pt">Maintenance Requests</div>
+      <div class="ps">Report issues in the building — broken lights, plumbing, damage, etc.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+        <div>
+          <div class="st">Submit a Request</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Title</label><input id="mnt-title" placeholder="e.g. Broken light in hallway"></div>
+            <div class="fg"><label>Category</label>
+              <select id="mnt-cat">
+                <option>Plumbing</option><option>Electrical</option><option>Heating</option>
+                <option>Cleaning</option><option>Furniture</option><option>Other</option>
+              </select>
+            </div>
+            <div class="fg"><label>Description</label>
+              <textarea id="mnt-desc" placeholder="Describe the issue in detail…"></textarea>
+            </div>
+            <button class="btn btn-p btn-full" onclick="submitMaint()">Submit Request</button>
+          </div>
+        </div>
+        <div>
+          <div class="st">My Requests</div>
+          <div id="mnt-my-list"></div>
+        </div>
+      </div>
+      <div class="st" style="margin-top:28px">All Open Requests</div>
+      <div class="tw"><table>
+        <thead><tr><th>Room</th><th>Title</th><th>Category</th><th>Status</th><th>Submitted</th></tr></thead>
+        <tbody id="mnt-tbody"></tbody>
+      </table></div>
+    </div>
+
+    <!-- PARCELS -->
+    <div class="page" id="page-parcels">
+      <div class="pt">📦 Parcels & Mail</div>
+      <div class="ps">Check if you have a parcel or letter waiting for collection.</div>
+      <div class="st">Waiting for Collection</div>
+      <div id="parcel-list"></div>
+      <div class="st" style="margin-top:28px">Collected</div>
+      <div id="parcel-collected-list"></div>
+    </div>
+
+    <!-- GUESTS -->
+    <div class="page" id="page-guests">
+      <div class="pt">🏠 Guest Registration</div>
+      <div class="ps">Register overnight guests staying in your room.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+        <div>
+          <div class="st">Register a Guest</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Guest Name</label><input id="gs-name" placeholder="Full name of guest"></div>
+            <div class="fr">
+              <div class="fg"><label>Check-In Date</label><input type="date" id="gs-in"></div>
+              <div class="fg"><label>Check-Out Date</label><input type="date" id="gs-out"></div>
+            </div>
+            <button class="btn btn-p btn-full" onclick="registerGuest()">Register Guest</button>
+          </div>
+        </div>
+        <div>
+          <div class="st">My Current Guests</div>
+          <div id="gs-my-list"></div>
+        </div>
+      </div>
+      <div class="st" style="margin-top:28px">All Active Guests</div>
+      <div class="tw"><table>
+        <thead><tr><th>Resident</th><th>Room</th><th>Guest</th><th>Check-In</th><th>Check-Out</th><th></th></tr></thead>
+        <tbody id="gs-tbody"></tbody>
+      </table></div>
+    </div>
+
+    <!-- LOST & FOUND -->
+    <div class="page" id="page-lostfound">
+      <div class="pt">🔍 Lost & Found</div>
+      <div class="ps">Post lost or found items. Help your neighbours reunite with their belongings.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+        <div>
+          <div class="st">Post an Item</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Type</label>
+              <select id="lf-type">
+                <option value="lost">🔴 Lost — I lost this item</option>
+                <option value="found">🟢 Found — I found this item</option>
+              </select>
+            </div>
+            <div class="fg"><label>Item Title</label><input id="lf-title" placeholder="e.g. Blue umbrella, Airpods case"></div>
+            <div class="fg"><label>Description</label>
+              <textarea id="lf-desc" placeholder="Describe the item, where it was lost/found…"></textarea>
+            </div>
+            <button class="btn btn-p btn-full" onclick="postLF()">Post Item</button>
+          </div>
+        </div>
+        <div>
+          <div class="st">My Posts</div>
+          <div id="lf-my-list"></div>
+        </div>
+      </div>
+      <div class="st" style="margin-top:28px">Active Listings</div>
+      <div class="grid grid2" id="lf-list"></div>
+    </div>
+
+    <!-- PROFILE -->
+    <div class="page" id="page-profile">
+      <div class="pt">👤 My Profile</div>
+      <div class="ps">Update your contact details and password.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;max-width:700px">
+        <div>
+          <div class="st">Contact Details</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Full Name</label><input id="prof-name" placeholder="Your name"></div>
+            <div class="fg"><label>Email</label><input id="prof-email" type="email" placeholder="your@email.com"></div>
+            <div class="fg"><label>Phone</label><input id="prof-phone" type="tel" placeholder="+49 123 456789"></div>
+            <button class="btn btn-p btn-full" onclick="saveProfile()">Save Changes</button>
+          </div>
+        </div>
+        <div>
+          <div class="st">Change Password</div>
+          <div class="adm" style="padding:22px">
+            <div class="fg"><label>Current Password</label><input id="prof-pw-old" type="password" placeholder="Current password"></div>
+            <div class="fg"><label>New Password</label><input id="prof-pw-new" type="password" placeholder="New password (min 6 chars)"></div>
+            <div class="fg"><label>Confirm New Password</label><input id="prof-pw-new2" type="password" placeholder="Repeat new password"></div>
+            <button class="btn btn-s btn-full" onclick="changePassword()">Change Password</button>
+          </div>
+        </div>
+      </div>
+      <div class="st" style="margin-top:28px;max-width:700px">My Bookings</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:700px">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Laundry</div>
+          <div id="prof-lnd"></div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Equipment</div>
+          <div id="prof-eq"></div>
+        </div>
       </div>
     </div>
 
@@ -1964,7 +2256,12 @@ function showPage(name){
   const b=document.querySelector('[data-page="'+name+'"]');
   if(b) b.classList.add('active');
   window.scrollTo(0,0);
-  if(name==='admin'){renderAdmNews();renderAdmEvts();renderAdmNotices();renderAdmLnd();renderAdmEq();loadAdmUsers();}
+  if(name==='admin'){renderAdmNews();renderAdmEvts();renderAdmNotices();renderAdmLnd();renderAdmEq();loadAdmUsers();loadAdmMaint();loadAdmParcels();}
+  if(name==='maintenance'){loadMaint();}
+  if(name==='parcels'){loadParcels();}
+  if(name==='guests'){loadGuests();}
+  if(name==='lostfound'){loadLF();}
+  if(name==='profile'){loadProfile();}
 }
 
 // ── TOAST ────────────────────────────────────────────────────────
@@ -2086,6 +2383,286 @@ function renderCalEvents(ds,eventDates){
       <div><div style="font-weight:600;color:var(--slate)">${esc(e.name)}</div>
       <div style="color:var(--muted);font-size:11px">${esc(e.time_||'')}${e.location?' · '+esc(e.location):''}</div></div>
     </div>`).join('');
+}
+
+// ── MAINTENANCE ──────────────────────────────────────────────────
+let MAINT=[];
+async function loadMaint(){
+  const d=await GET('/api/maintenance'); if(!Array.isArray(d)) return;
+  MAINT=d; renderMaint();
+}
+function renderMaint(){
+  // My requests
+  const mine=MAINT.filter(m=>me&&m.userId===me.id);
+  const myEl=document.getElementById('mnt-my-list');
+  if(myEl) myEl.innerHTML=mine.length?mine.map(m=>`
+    <div class="card" style="margin-bottom:10px;border-left:3px solid ${m.status==='open'?'var(--red)':m.status==='in-progress'?'var(--amber)':'var(--green)'}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div>
+          <div style="font-weight:600;font-size:14px">${esc(m.title)}</div>
+          <div style="font-size:12px;color:var(--muted)">${esc(m.category)} · ${(m.createdAt||'').split('T')[0]}</div>
+        </div>
+        <span class="badge ${m.status==='open'?'bm':m.status==='in-progress'?'bg':'bk'}">${m.status}</span>
+      </div>
+    </div>`).join(''):'<div style="color:var(--muted);font-size:13px">No requests submitted yet.</div>';
+  // All open
+  const tbody=document.getElementById('mnt-tbody');
+  if(tbody){
+    const open=MAINT.filter(m=>m.status!=='resolved');
+    tbody.innerHTML=open.length?open.map(m=>`<tr>
+      <td>Room ${esc(m.room)}</td><td>${esc(m.title)}</td><td>${esc(m.category)}</td>
+      <td><span class="badge ${m.status==='open'?'bm':m.status==='in-progress'?'bg':'bk'}">${m.status}</span></td>
+      <td style="font-size:12px;color:var(--muted)">${(m.createdAt||'').split('T')[0]}</td>
+    </tr>`).join(''):'<tr><td class="tbl-empty" colspan="5">No open requests.</td></tr>';
+  }
+}
+async function submitMaint(){
+  const title=document.getElementById('mnt-title').value.trim();
+  const cat=document.getElementById('mnt-cat').value;
+  const desc=document.getElementById('mnt-desc').value.trim();
+  if(!title){toast('Please enter a title','er');return;}
+  const r=await POST('/api/maintenance',{title,category:cat,description:desc});
+  if(r&&r.id){
+    document.getElementById('mnt-title').value='';
+    document.getElementById('mnt-desc').value='';
+    toast('Request submitted!','ok'); loadMaint();
+  } else if(r&&r.error) toast(r.error,'er');
+}
+async function loadAdmMaint(){
+  const d=await GET('/api/maintenance'); if(!Array.isArray(d)) return;
+  const tbody=document.getElementById('adm-maint');
+  if(!tbody) return;
+  tbody.innerHTML=d.length?d.map(m=>`<tr>
+    <td>${esc(m.name)}</td><td>Room ${esc(m.room)}</td><td>${esc(m.title)}</td>
+    <td>${esc(m.category)}</td>
+    <td>
+      <select onchange="updateMaintStatus('${m.id}',this.value)" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:#fff">
+        <option ${m.status==='open'?'selected':''}>open</option>
+        <option ${m.status==='in-progress'?'selected':''}>in-progress</option>
+        <option ${m.status==='resolved'?'selected':''}>resolved</option>
+      </select>
+    </td>
+    <td style="font-size:12px;color:var(--muted)">${(m.createdAt||'').split('T')[0]}</td>
+    <td><button class="btn btn-r btn-sm" onclick="delMaint('${m.id}')">Del</button></td>
+  </tr>`).join(''):'<tr><td class="tbl-empty" colspan="7">No requests.</td></tr>';
+}
+async function updateMaintStatus(id,status){
+  await POST('/api/maintenance/'+id+'/status',{status});
+  toast('Status updated','ok');
+}
+async function delMaint(id){ await DEL('/api/maintenance/'+id); toast('Deleted'); loadAdmMaint(); }
+
+// ── PARCELS ──────────────────────────────────────────────────────
+let PARCELS=[];
+async function loadParcels(){
+  const d=await GET('/api/parcels'); if(!Array.isArray(d)) return;
+  PARCELS=d; renderParcels();
+}
+async function loadAdmParcels(){
+  const d=await GET('/api/parcels'); if(!Array.isArray(d)) return;
+  PARCELS=d; renderAdmParcels(d);
+}
+function renderParcels(){
+  const waiting=PARCELS.filter(p=>!p.collected);
+  const collected=PARCELS.filter(p=>p.collected);
+  const myRoom=me?me.room:'';
+  const el=document.getElementById('parcel-list');
+  if(el) el.innerHTML=waiting.length?waiting.map(p=>`
+    <div class="card" style="margin-bottom:10px;border-left:3px solid ${p.room===myRoom?'var(--amber)':'var(--border)'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:600;font-size:15px">📦 ${esc(p.residentName)} <span style="color:var(--muted);font-weight:400">— Room ${esc(p.room)}</span></div>
+          <div style="font-size:13px;color:var(--slate2);margin-top:3px">${esc(p.description)}${p.carrier?' · via '+esc(p.carrier):''}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Arrived: ${(p.createdAt||'').split('T')[0]}</div>
+        </div>
+        ${p.room===myRoom?`<button class="btn btn-g btn-sm" onclick="collectParcel('${p.id}')">✓ Mark Collected</button>`:''}
+      </div>
+    </div>`).join(''):'<div class="empty"><span class="empty-icon">📭</span>No parcels waiting.</div>';
+  const el2=document.getElementById('parcel-collected-list');
+  if(el2) el2.innerHTML=collected.slice(0,10).map(p=>`
+    <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted)">
+      ✓ ${esc(p.residentName)} (Room ${esc(p.room)}) — ${esc(p.description)} — collected ${(p.collectedAt||'').split('T')[0]}
+    </div>`).join('')||'<div style="color:var(--muted);font-size:13px">None yet.</div>';
+}
+function renderAdmParcels(d){
+  const tbody=document.getElementById('adm-parcels');
+  if(!tbody) return;
+  tbody.innerHTML=d.length?d.map(p=>`<tr>
+    <td>${esc(p.residentName)}</td><td>Room ${esc(p.room)}</td>
+    <td>${esc(p.description)}</td><td>${esc(p.carrier||'—')}</td>
+    <td style="font-size:12px;color:var(--muted)">${(p.createdAt||'').split('T')[0]}</td>
+    <td><span class="badge ${p.collected?'bk':'bg'}">${p.collected?'Collected':'Waiting'}</span></td>
+    <td><button class="btn btn-r btn-sm" onclick="delParcel('${p.id}')">Del</button></td>
+  </tr>`).join(''):'<tr><td class="tbl-empty" colspan="7">No parcels.</td></tr>';
+}
+async function logParcel(){
+  const name=document.getElementById('adm-pname').value.trim();
+  const room=document.getElementById('adm-proom').value.trim();
+  const desc=document.getElementById('adm-pdesc').value.trim();
+  const carrier=document.getElementById('adm-pcarrier').value.trim();
+  if(!name||!room||!desc){toast('Name, room and description required','er');return;}
+  const r=await POST('/api/parcels',{residentName:name,room,description:desc,carrier});
+  if(r&&r.id){
+    ['adm-pname','adm-proom','adm-pdesc','adm-pcarrier'].forEach(id=>document.getElementById(id).value='');
+    toast('Parcel logged — resident notified!','ok'); loadAdmParcels();
+  } else if(r&&r.error) toast(r.error,'er');
+}
+async function collectParcel(id){
+  const r=await POST('/api/parcels/'+id+'/collect',{});
+  if(r&&r.id){toast('Marked as collected','ok');loadParcels();}
+  else if(r&&r.error) toast(r.error,'er');
+}
+async function delParcel(id){ await DEL('/api/parcels/'+id); toast('Deleted'); loadAdmParcels(); }
+
+// ── GUESTS ───────────────────────────────────────────────────────
+let GUESTS=[];
+async function loadGuests(){
+  const d=await GET('/api/guests'); if(!Array.isArray(d)) return;
+  GUESTS=d; renderGuests();
+}
+function renderGuests(){
+  const mine=GUESTS.filter(g=>me&&g.userId===me.id&&g.active);
+  const myEl=document.getElementById('gs-my-list');
+  if(myEl) myEl.innerHTML=mine.length?mine.map(g=>`
+    <div class="card" style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>
+          <div style="font-weight:600;font-size:14px">👤 ${esc(g.guestName)}</div>
+          <div style="font-size:12px;color:var(--muted)">${g.checkIn} → ${g.checkOut}</div>
+        </div>
+        <button class="btn btn-r btn-sm" onclick="checkoutGuest('${g.id}')">Check Out</button>
+      </div>
+    </div>`).join(''):'<div style="color:var(--muted);font-size:13px">No active guests.</div>';
+  const tbody=document.getElementById('gs-tbody');
+  if(tbody){
+    const active=GUESTS.filter(g=>g.active);
+    tbody.innerHTML=active.length?active.map(g=>`<tr>
+      <td>${esc(g.residentName)}</td><td>Room ${esc(g.room)}</td>
+      <td>${esc(g.guestName)}</td><td>${g.checkIn}</td><td>${g.checkOut}</td>
+      <td>${me&&(g.userId===me.id||me.role==='admin')?`<button class="btn btn-r btn-sm" onclick="checkoutGuest('${g.id}')">Check Out</button>`:''}</td>
+    </tr>`).join(''):'<tr><td class="tbl-empty" colspan="6">No active guests.</td></tr>';
+  }
+}
+async function registerGuest(){
+  const guestName=document.getElementById('gs-name').value.trim();
+  const checkIn=document.getElementById('gs-in').value;
+  const checkOut=document.getElementById('gs-out').value;
+  if(!guestName||!checkIn||!checkOut){toast('All fields required','er');return;}
+  if(checkOut<checkIn){toast('Check-out must be after check-in','er');return;}
+  const r=await POST('/api/guests',{guestName,checkIn,checkOut});
+  if(r&&r.id){
+    ['gs-name','gs-in','gs-out'].forEach(id=>document.getElementById(id).value='');
+    toast('Guest registered!','ok'); loadGuests();
+  } else if(r&&r.error) toast(r.error,'er');
+}
+async function checkoutGuest(id){
+  const r=await POST('/api/guests/'+id+'/checkout',{});
+  if(r&&r.id){toast('Guest checked out','ok');loadGuests();}
+  else if(r&&r.error) toast(r.error,'er');
+}
+
+// ── LOST & FOUND ─────────────────────────────────────────────────
+let LF=[];
+async function loadLF(){
+  const d=await GET('/api/lostfound'); if(!Array.isArray(d)) return;
+  LF=d; renderLF();
+}
+function renderLF(){
+  const mine=LF.filter(l=>me&&l.userId===me.id);
+  const myEl=document.getElementById('lf-my-list');
+  if(myEl) myEl.innerHTML=mine.length?mine.map(l=>`
+    <div class="card" style="margin-bottom:10px;border-left:3px solid ${l.type==='lost'?'var(--red)':'var(--green)'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>
+          <div style="font-weight:600;font-size:14px">${l.type==='lost'?'🔴':'🟢'} ${esc(l.title)}</div>
+          <div style="font-size:12px;color:var(--muted)">${(l.createdAt||'').split('T')[0]}</div>
+        </div>
+        ${!l.resolved?`<button class="btn btn-g btn-sm" onclick="resolveLF('${l.id}')">✓ Resolved</button>`:'<span class="badge bk">Resolved</span>'}
+      </div>
+    </div>`).join(''):'<div style="color:var(--muted);font-size:13px">Nothing posted yet.</div>';
+  const el=document.getElementById('lf-list');
+  if(el){
+    const active=LF.filter(l=>!l.resolved);
+    el.innerHTML=active.length?active.map(l=>`
+      <div class="card" style="border-left:3px solid ${l.type==='lost'?'var(--red)':'var(--green)'}">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:18px">${l.type==='lost'?'🔴':'🟢'}</span>
+          <span class="badge ${l.type==='lost'?'bm':'bk'}">${l.type==='lost'?'LOST':'FOUND'}</span>
+          <span style="font-size:11px;color:var(--muted)">${(l.createdAt||'').split('T')[0]}</span>
+        </div>
+        <div style="font-family:var(--serif);font-size:16px;font-weight:500;margin-bottom:6px">${esc(l.title)}</div>
+        <div style="font-size:13px;color:var(--slate2);line-height:1.6">${esc(l.description)}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:8px">Posted by ${esc(l.name)} — Room ${esc(l.room)}</div>
+      </div>`).join(''):'<div class="empty"><span class="empty-icon">🔍</span>No active listings.</div>';
+  }
+}
+async function postLF(){
+  const type=document.getElementById('lf-type').value;
+  const title=document.getElementById('lf-title').value.trim();
+  const desc=document.getElementById('lf-desc').value.trim();
+  if(!title){toast('Please enter a title','er');return;}
+  const r=await POST('/api/lostfound',{type,title,description:desc});
+  if(r&&r.id){
+    document.getElementById('lf-title').value='';
+    document.getElementById('lf-desc').value='';
+    toast('Posted!','ok'); loadLF();
+  } else if(r&&r.error) toast(r.error,'er');
+}
+async function resolveLF(id){
+  const r=await POST('/api/lostfound/'+id+'/resolve',{});
+  if(r&&r.id){toast('Marked as resolved','ok');loadLF();}
+  else if(r&&r.error) toast(r.error,'er');
+}
+
+// ── PROFILE ──────────────────────────────────────────────────────
+function loadProfile(){
+  if(!me) return;
+  document.getElementById('prof-name').value=me.name||'';
+  document.getElementById('prof-email').value=me.email||'';
+  document.getElementById('prof-phone').value=me.phone||'';
+  // My laundry bookings
+  const myLnd=LND.filter(b=>b.userId===me.id);
+  const lndEl=document.getElementById('prof-lnd');
+  if(lndEl) lndEl.innerHTML=myLnd.length?myLnd.map(b=>`
+    <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
+      <div style="font-weight:500">${b.machineId} — ${b.slot}</div>
+      <div style="color:var(--muted);font-size:12px">${b.date}</div>
+    </div>`).join(''):'<div style="color:var(--muted);font-size:13px">No bookings.</div>';
+  // My equip bookings
+  const myEq=EQ.filter(b=>b.userId===me.id);
+  const eqEl=document.getElementById('prof-eq');
+  if(eqEl) eqEl.innerHTML=myEq.length?myEq.map(b=>`
+    <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
+      <div style="font-weight:500">${EQUIP_ICONS[b.item]||'📦'} ${esc(b.item)}</div>
+      <div style="color:var(--muted);font-size:12px">${b.date}${b.startTime&&b.startTime!=='—'?' · '+b.startTime:''}</div>
+    </div>`).join(''):'<div style="color:var(--muted);font-size:13px">No bookings.</div>';
+}
+async function saveProfile(){
+  const name=document.getElementById('prof-name').value.trim();
+  const email=document.getElementById('prof-email').value.trim();
+  const phone=document.getElementById('prof-phone').value.trim();
+  if(!name){toast('Name is required','er');return;}
+  const r=await POST('/api/profile',{name,email,phone});
+  if(r&&r.id){
+    me={...me,name,email,phone};
+    try{localStorage.setItem('res_u',JSON.stringify(me));}catch(e){}
+    document.getElementById('un').textContent=me.name;
+    document.getElementById('ua').textContent=(me.name[0]||'?').toUpperCase();
+    toast('Profile updated!','ok');
+  } else if(r&&r.error) toast(r.error,'er');
+}
+async function changePassword(){
+  const oldPw=document.getElementById('prof-pw-old').value;
+  const newPw=document.getElementById('prof-pw-new').value;
+  const newPw2=document.getElementById('prof-pw-new2').value;
+  if(!oldPw||!newPw||!newPw2){toast('All fields required','er');return;}
+  if(newPw!==newPw2){toast('New passwords do not match','er');return;}
+  if(newPw.length<6){toast('Password must be at least 6 characters','er');return;}
+  const r=await POST('/api/profile/password',{oldPassword:oldPw,newPassword:newPw});
+  if(r&&r.success){
+    ['prof-pw-old','prof-pw-new','prof-pw-new2'].forEach(id=>document.getElementById(id).value='');
+    toast('Password changed!','ok');
+  } else if(r&&r.error) toast(r.error,'er');
 }
 
 // ── INIT ─────────────────────────────────────────────────────────
@@ -2453,8 +3030,279 @@ int main(int argc, char** argv){
         db.save(); bcEquip(); res.json("{\"success\":true}");
     });
 
+    // ── MAINTENANCE ───────────────────────────────────────────────
+    srv.route("GET","/api/maintenance",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.maintenance).dump());
+    });
+    srv.route("POST","/api/maintenance",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto title=body["title"].asStr();
+        if(title.empty()){ res.err(400,"Title required."); return; }
+        MaintReq m; m.id=makeUID(); m.userId=me->id; m.name=me->name; m.room=me->room;
+        m.title=title; m.description=body["description"].asStr();
+        m.category=body["category"].asStr().empty()?"Other":body["category"].asStr();
+        m.status="open"; m.createdAt=nowISO();
+        db.maintenance.push_back(m); db.save();
+        res.json(toJ(m).dump());
+        // Email admin
+        for(auto&u:db.users){
+            if(u.role=="admin"&&!u.email.empty())
+                mailer.sendAsync(u.email,u.name,"🔧 New Maintenance Request",
+                    "New request from "+me->name+" (Room "+me->room+"):\n\n"
+                    "Title: "+title+"\nCategory: "+m.category+"\n"
+                    "Details: "+m.description+"\n\nPlease check the admin panel.");
+        }
+    });
+    srv.route("POST","/api/maintenance/:id/status",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        MaintReq* m=db.findMaint(id);
+        if(!m){ res.err(404,"Not found."); return; }
+        auto body=parseJson(req.body);
+        m->status=body["status"].asStr();
+        db.save();
+        // notify resident
+        User* resident=db.findUser(m->userId);
+        if(resident&&!resident->email.empty())
+            mailer.sendAsync(resident->email,resident->name,"🔧 Maintenance Update: "+m->title,
+                "Hi "+resident->name+",\n\nYour maintenance request has been updated:\n\n"
+                "Title: "+m->title+"\nNew Status: "+m->status+"\n\nResidence Management");
+        res.json(toJ(*m).dump());
+    });
+    srv.route("DELETE","/api/maintenance/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        auto& v=db.maintenance;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
+        db.save(); res.json("{\"success\":true}");
+    });
+
+    // ── PARCELS ───────────────────────────────────────────────────
+    srv.route("GET","/api/parcels",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.parcels).dump());
+    });
+    srv.route("POST","/api/parcels",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto body=parseJson(req.body);
+        auto rname=body["residentName"].asStr(), room=body["room"].asStr();
+        auto desc=body["description"].asStr();
+        if(rname.empty()||room.empty()||desc.empty()){ res.err(400,"Name, room and description required."); return; }
+        Parcel p; p.id=makeUID(); p.residentName=rname; p.room=room;
+        p.description=desc; p.carrier=body["carrier"].asStr();
+        p.collected=false; p.createdAt=nowISO();
+        db.parcels.push_back(p); db.save();
+        res.json(toJ(p).dump());
+        // email resident with matching room
+        for(auto&u:db.users){
+            if(toLower(u.room)==toLower(room)&&!u.email.empty())
+                mailer.sendAsync(u.email,u.name,"📦 You Have a Parcel!",
+                    "Hi "+u.name+",\n\nA parcel has arrived for you:\n\n"
+                    "Description: "+desc+"\n"+(p.carrier.empty()?"":"Carrier: "+p.carrier+"\n")+
+                    "\nPlease collect it from the reception/entrance.\n\nResidence Management");
+        }
+    });
+    srv.route("POST","/api/parcels/:id/collect",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto id=req.params.at("id");
+        Parcel* p=db.findParcel(id);
+        if(!p){ res.err(404,"Not found."); return; }
+        p->collected=true; p->collectedAt=nowISO();
+        db.save(); res.json(toJ(*p).dump());
+    });
+    srv.route("DELETE","/api/parcels/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        auto& v=db.parcels;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
+        db.save(); res.json("{\"success\":true}");
+    });
+
+    // ── GUESTS ────────────────────────────────────────────────────
+    srv.route("GET","/api/guests",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.guests).dump());
+    });
+    srv.route("POST","/api/guests",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto gname=body["guestName"].asStr(), cin=body["checkIn"].asStr(), cout_=body["checkOut"].asStr();
+        if(gname.empty()||cin.empty()||cout_.empty()){ res.err(400,"All fields required."); return; }
+        Guest g; g.id=makeUID(); g.userId=me->id; g.residentName=me->name; g.room=me->room;
+        g.guestName=gname; g.checkIn=cin; g.checkOut=cout_; g.active=true; g.createdAt=nowISO();
+        db.guests.push_back(g); db.save();
+        res.json(toJ(g).dump());
+    });
+    srv.route("POST","/api/guests/:id/checkout",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto id=req.params.at("id");
+        Guest* g=db.findGuest(id);
+        if(!g){ res.err(404,"Not found."); return; }
+        if(me->role!="admin"&&g->userId!=me->id){ res.err(403,"Forbidden."); return; }
+        g->active=false; db.save(); res.json(toJ(*g).dump());
+    });
+
+    // ── LOST & FOUND ──────────────────────────────────────────────
+    srv.route("GET","/api/lostfound",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        res.json(toJArr(db.lostfound).dump());
+    });
+    srv.route("POST","/api/lostfound",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto title=body["title"].asStr();
+        if(title.empty()){ res.err(400,"Title required."); return; }
+        LostFound l; l.id=makeUID(); l.userId=me->id; l.name=me->name; l.room=me->room;
+        l.type=body["type"].asStr().empty()?"lost":body["type"].asStr();
+        l.title=title; l.description=body["description"].asStr();
+        l.resolved=false; l.createdAt=nowISO();
+        db.lostfound.push_back(l); db.save();
+        res.json(toJ(l).dump());
+    });
+    srv.route("POST","/api/lostfound/:id/resolve",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto id=req.params.at("id");
+        LostFound* l=db.findLF(id);
+        if(!l){ res.err(404,"Not found."); return; }
+        if(me->role!="admin"&&l->userId!=me->id){ res.err(403,"Forbidden."); return; }
+        l->resolved=true; db.save(); res.json(toJ(*l).dump());
+    });
+    srv.route("DELETE","/api/lostfound/:id",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        if(me->role!="admin"){ res.err(403,"Admin only."); return; }
+        auto id=req.params.at("id");
+        auto& v=db.lostfound;
+        v.erase(std::remove_if(v.begin(),v.end(),[&](auto&x){return x.id==id;}),v.end());
+        db.save(); res.json("{\"success\":true}");
+    });
+
+    // ── PROFILE ───────────────────────────────────────────────────
+    srv.route("POST","/api/profile",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto name=body["name"].asStr();
+        if(name.empty()){ res.err(400,"Name required."); return; }
+        me->name=name; me->email=body["email"].asStr(); me->phone=body["phone"].asStr();
+        db.save(); res.json(toJ(*me).dump());
+    });
+    srv.route("POST","/api/profile/password",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        User* me=auth(req,res); if(!me) return;
+        auto body=parseJson(req.body);
+        auto oldPw=body["oldPassword"].asStr(), newPw=body["newPassword"].asStr();
+        if(oldPw.empty()||newPw.empty()){ res.err(400,"Both passwords required."); return; }
+        if(hashPw(oldPw,me->salt)!=me->hash){ res.err(401,"Current password is incorrect."); return; }
+        if(newPw.size()<6){ res.err(400,"Password must be at least 6 characters."); return; }
+        me->salt=randomHex(16); me->hash=hashPw(newPw,me->salt);
+        db.save(); res.json("{\"success\":true}");
+    });
+
     // ── end routes ─────────────────────────────────────────────
     srv.setHtml(FRONTEND);
+
+    // ── Equipment reminder background thread ──────────────────────
+    // Tracks which reminders have already been sent to avoid duplicates
+    std::set<std::string> sentReminders; // key = bookingId + ":10min" or ":overdue"
+    std::mutex reminderMtx;
+
+    std::thread([&](){
+        while(true){
+            std::this_thread::sleep_for(std::chrono::minutes(1));
+            try{
+                if(!mailer.enabled) continue;
+
+                // Get current time as HH:MM
+                std::time_t now=std::time(nullptr);
+                std::tm* tm=std::localtime(&now);
+                char timeBuf[6]; std::strftime(timeBuf,sizeof(timeBuf),"%H:%M",tm);
+                char dateBuf[11]; std::strftime(dateBuf,sizeof(dateBuf),"%Y-%m-%d",tm);
+                std::string nowTime=timeBuf, nowDate=dateBuf;
+
+                // Helper: parse "HH:MM" into minutes since midnight
+                auto toMins=[](const std::string& t) -> int {
+                    if(t.size()<5||t[2]!=':') return -1;
+                    try{ return std::stoi(t.substr(0,2))*60+std::stoi(t.substr(3,2)); }
+                    catch(...){ return -1; }
+                };
+
+                int nowMins=toMins(nowTime);
+                if(nowMins<0) continue;
+
+                std::lock_guard<std::mutex> lk(db.mtx);
+                for(auto& bk : db.equip){
+                    // Only check today's bookings with valid start/end times
+                    if(bk.date!=nowDate) continue;
+                    if(bk.startTime=="—"||bk.startTime.empty()) continue;
+                    if(bk.endTime=="—"||bk.endTime.empty()) continue;
+
+                    int startMins=toMins(bk.startTime);
+                    int endMins=toMins(bk.endTime);
+                    if(startMins<0||endMins<0) continue;
+
+                    // Find the resident's email
+                    User* u=db.findUser(bk.userId);
+                    if(!u||u->email.empty()) continue;
+
+                    // 10-minute warning: send when nowMins == endMins - 10
+                    std::string key10=bk.id+":10min";
+                    {
+                        std::lock_guard<std::mutex> rlk(reminderMtx);
+                        if(nowMins==endMins-10 && sentReminders.find(key10)==sentReminders.end()){
+                            sentReminders.insert(key10);
+                            mailer.sendAsync(u->email, u->name,
+                                "⏰ Equipment Return Reminder — 10 Minutes Left",
+                                "Hi "+u->name+",\n\n"
+                                "Your booking for "+bk.item+" ends in 10 minutes (at "+bk.endTime+").\n\n"
+                                "Please wrap up and return the item promptly so other residents can use it.\n\n"
+                                "Residence Management");
+                            std::cout<<"  Reminder: 10min warning sent to "<<u->name<<" for "<<bk.item<<"\n";
+                        }
+                    }
+
+                    // Overdue: send when nowMins == endMins (booking expired)
+                    std::string keyOD=bk.id+":overdue";
+                    {
+                        std::lock_guard<std::mutex> rlk(reminderMtx);
+                        if(nowMins==endMins && sentReminders.find(keyOD)==sentReminders.end()){
+                            sentReminders.insert(keyOD);
+                            mailer.sendAsync(u->email, u->name,
+                                "🚨 Equipment Booking Expired — Please Return Now",
+                                "Hi "+u->name+",\n\n"
+                                "Your 1-hour booking for "+bk.item+" has now expired (ended at "+bk.endTime+").\n\n"
+                                "Please return the item immediately so other residents can access it.\n\n"
+                                "Failure to return equipment on time may affect future booking privileges.\n\n"
+                                "Residence Management");
+                            std::cout<<"  Reminder: overdue notice sent to "<<u->name<<" for "<<bk.item<<"\n";
+                        }
+                    }
+                }
+            } catch(...){
+                std::cerr<<"  Reminder thread error\n";
+            }
+        }
+    }).detach();
 
     std::cout<<"╠══════════════════════════════════════════╣\n";
     std::cout<<"║  Open:    http://localhost:"<<port<<"           ║\n";
