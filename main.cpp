@@ -1168,11 +1168,19 @@ body{background:var(--cream);color:var(--slate);font-family:var(--sans);font-siz
 #topbar{background:var(--slate);color:#fff;padding:0 24px;display:flex;align-items:center;height:58px;position:sticky;top:0;z-index:100;box-shadow:0 2px 18px var(--shadow2)}
 .brand{font-family:var(--serif);font-size:19px;font-weight:700;color:var(--amber3);margin-right:20px;display:flex;align-items:center;gap:10px;cursor:pointer;flex-shrink:0;user-select:none}
 .brand-icon{width:32px;height:32px;background:var(--amber);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
-#nav{display:flex;gap:2px;flex:1;overflow-x:auto;scrollbar-width:none}
+#nav{display:flex;gap:2px;flex:1}
 #nav::-webkit-scrollbar{display:none}
 .nb{background:none;border:none;color:rgba(255,255,255,.6);font-family:var(--sans);font-size:13px;font-weight:500;padding:6px 14px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:all .2s}
 .nb:hover{color:#fff;background:rgba(255,255,255,.08)}
 .nb.active{color:var(--amber3);background:rgba(201,128,58,.15)}
+/* dropdown */
+.nav-group{position:relative}
+.nav-group:hover .nav-drop,.nav-group:focus-within .nav-drop{display:block}
+.nav-drop{display:none;position:absolute;top:calc(100% + 6px);left:0;background:var(--slate2);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:6px;min-width:180px;box-shadow:0 12px 32px rgba(0,0,0,.35);z-index:200}
+.nav-drop button{display:block;width:100%;text-align:left;background:none;border:none;color:rgba(255,255,255,.75);font-family:var(--sans);font-size:13px;font-weight:500;padding:8px 12px;border-radius:7px;cursor:pointer;transition:all .15s}
+.nav-drop button:hover{background:rgba(255,255,255,.1);color:#fff}
+.nav-drop button.active{color:var(--amber3);background:rgba(201,128,58,.15)}
+.nb-arrow{font-size:9px;margin-left:3px;opacity:.6}
 #user-area{margin-left:auto;display:flex;align-items:center;gap:10px;flex-shrink:0}
 .uc{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:4px 14px 4px 6px}
 .ua{width:26px;height:26px;background:var(--amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
@@ -1406,15 +1414,37 @@ tbody td:first-child{color:var(--slate);font-weight:500}
     </div>
     <nav id="nav">
       <button class="nb active" onclick="showPage('dashboard')" data-page="dashboard">Dashboard</button>
-      <button class="nb"        onclick="showPage('news')"      data-page="news">News</button>
-      <button class="nb"        onclick="showPage('events')"    data-page="events">Events</button>
-      <button class="nb"        onclick="showPage('laundry')"   data-page="laundry">Laundry</button>
-      <button class="nb"        onclick="showPage('equip')"     data-page="equip">Equipment</button>
-      <button class="nb"        onclick="showPage('maintenance')" data-page="maintenance">🔧 Maintenance</button>
-      <button class="nb"        onclick="showPage('parcels')"   data-page="parcels">📦 Parcels</button>
-      <button class="nb"        onclick="showPage('guests')"    data-page="guests">🏠 Guests</button>
-      <button class="nb"        onclick="showPage('lostfound')" data-page="lostfound">🔍 Lost & Found</button>
-      <button class="nb"        onclick="showPage('profile')"   data-page="profile">👤 Profile</button>
+
+      <!-- Community -->
+      <div class="nav-group">
+        <button class="nb" id="nav-community">Community <span class="nb-arrow">▾</span></button>
+        <div class="nav-drop">
+          <button onclick="showPage('news')"   data-page="news">📰 News</button>
+          <button onclick="showPage('events')" data-page="events">🎉 Events</button>
+          <button onclick="showPage('lostfound')" data-page="lostfound">🔍 Lost & Found</button>
+        </div>
+      </div>
+
+      <!-- Bookings -->
+      <div class="nav-group">
+        <button class="nb" id="nav-bookings">Bookings <span class="nb-arrow">▾</span></button>
+        <div class="nav-drop">
+          <button onclick="showPage('laundry')" data-page="laundry">🧺 Laundry</button>
+          <button onclick="showPage('equip')"   data-page="equip">🔧 Equipment</button>
+          <button onclick="showPage('guests')"  data-page="guests">🏠 Guests</button>
+        </div>
+      </div>
+
+      <!-- Building -->
+      <div class="nav-group">
+        <button class="nb" id="nav-building">Building <span class="nb-arrow">▾</span></button>
+        <div class="nav-drop">
+          <button onclick="showPage('maintenance')" data-page="maintenance">🛠 Maintenance</button>
+          <button onclick="showPage('parcels')"     data-page="parcels">📦 Parcels</button>
+        </div>
+      </div>
+
+      <button class="nb" onclick="showPage('profile')" data-page="profile">👤 Profile</button>
       <button class="nb" id="admin-btn" onclick="showPage('admin')" data-page="admin" style="display:none">⚙ Admin</button>
     </nav>
     <div id="user-area">
@@ -2249,12 +2279,27 @@ async function delUser(id){
 }
 
 // ── NAVIGATION ───────────────────────────────────────────────────
+const PAGE_GROUP={
+  news:'community',events:'community',lostfound:'community',
+  laundry:'bookings',equip:'bookings',guests:'bookings',
+  maintenance:'building',parcels:'building'
+};
 function showPage(name){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.nav-drop button').forEach(b=>b.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
-  const b=document.querySelector('[data-page="'+name+'"]');
+  // highlight direct nav button
+  const b=document.querySelector('#nav > button[data-page="'+name+'"]');
   if(b) b.classList.add('active');
+  // highlight dropdown item + parent
+  const grp=PAGE_GROUP[name];
+  if(grp){
+    const parent=document.getElementById('nav-'+grp);
+    if(parent) parent.classList.add('active');
+    const drop=document.querySelector('[data-page="'+name+'"]');
+    if(drop) drop.classList.add('active');
+  }
   window.scrollTo(0,0);
   if(name==='admin'){renderAdmNews();renderAdmEvts();renderAdmNotices();renderAdmLnd();renderAdmEq();loadAdmUsers();loadAdmMaint();loadAdmParcels();}
   if(name==='maintenance'){loadMaint();}
