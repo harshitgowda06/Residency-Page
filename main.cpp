@@ -3358,6 +3358,138 @@ int main(int argc, char** argv){
         db.save(); res.json("{\"success\":true}");
     });
 
+    // ── PUBLIC: announcements page (no login required) ────────────
+    srv.route("GET","/api/public/announcements",[&](const Req& req, Res& res){
+        std::lock_guard<std::mutex> lk(db.mtx);
+        Json out=Json::object();
+        Json notices=Json::array();
+        for(auto&n:db.notices) if(n.active) notices.push(toJ(n));
+        auto newsList=db.news;
+        std::sort(newsList.begin(),newsList.end(),[](auto&a,auto&b){return b.date<a.date;});
+        out["notices"]=notices;
+        out["news"]=toJArr(newsList);
+        res.json(out.dump());
+    });
+
+    srv.route("GET","/announcements",[&](const Req& req, Res& res){
+        // Standalone public announcements page
+        std::string page=R"HTML(<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Announcements — Residence Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--cream:#f5f0e8;--cream2:#ede7d9;--parchment:#faf7f2;--slate:#2c3341;--slate2:#3d4758;--amber:#c9803a;--amber2:#e09550;--amber3:#f5b06a;--green:#4a7c59;--red:#b85450;--muted:#7a8494;--border:#ddd5c4;--shadow:rgba(44,51,65,.10);--serif:'Playfair Display',Georgia,serif;--sans:'DM Sans',system-ui,sans-serif;--r:10px;--r2:16px}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--cream);color:var(--slate);font-family:var(--sans);font-size:15px;line-height:1.6;min-height:100vh}
+header{background:var(--slate);padding:0 24px;height:58px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 18px rgba(44,51,65,.2);position:sticky;top:0;z-index:10}
+.brand{font-family:var(--serif);font-size:19px;font-weight:700;color:var(--amber3);display:flex;align-items:center;gap:10px;text-decoration:none}
+.brand-icon{width:32px;height:32px;background:var(--amber);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.login-btn{background:var(--amber);color:#fff;border:none;border-radius:8px;padding:7px 18px;font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;transition:background .2s}
+.login-btn:hover{background:var(--amber2)}
+main{max-width:760px;margin:0 auto;padding:32px 20px 64px}
+.page-title{font-family:var(--serif);font-size:32px;font-weight:700;margin-bottom:6px;letter-spacing:-.5px}
+.page-sub{color:var(--muted);font-size:14px;margin-bottom:32px}
+.st{font-family:var(--serif);font-size:20px;font-weight:500;color:var(--slate);margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.st::after{content:'';flex:1;height:1px;background:var(--border)}
+/* urgent banner */
+.urgent-bar{background:linear-gradient(135deg,#b85450,#d96b67);color:#fff;border-radius:var(--r2);padding:16px 20px;margin-bottom:12px;display:flex;gap:12px;align-items:flex-start;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(185,84,80,.4)}50%{box-shadow:0 0 0 8px rgba(185,84,80,0)}}
+.urgent-icon{font-size:20px;flex-shrink:0;margin-top:2px}
+.urgent-text{font-size:14px;font-weight:600;line-height:1.5}
+/* notice */
+.notice-card{background:linear-gradient(135deg,var(--amber),var(--amber2));color:#fff;border-radius:var(--r2);padding:16px 20px;margin-bottom:12px;display:flex;gap:12px;align-items:flex-start}
+.notice-text{font-size:14px;font-weight:500;line-height:1.5}
+/* news */
+.news-card{background:var(--parchment);border:1px solid var(--border);border-left:3px solid var(--amber);border-radius:var(--r2);padding:20px 22px;margin-bottom:14px;box-shadow:0 2px 8px var(--shadow)}
+.news-meta{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.3px;text-transform:uppercase}
+.bk{background:rgba(74,124,89,.15);color:#4a7c59}.bl{background:rgba(100,140,200,.15);color:#4a6fa5}
+.bm{background:rgba(185,84,80,.12);color:#b85450}.bg{background:rgba(201,128,58,.15);color:#c9803a}
+.news-date{font-size:12px;color:var(--muted)}
+.news-title{font-family:var(--serif);font-size:17px;font-weight:500;color:var(--slate);margin-bottom:6px;line-height:1.35}
+.news-body{font-size:14px;color:var(--slate2);line-height:1.65}
+.empty{text-align:center;padding:44px 24px;color:var(--muted);font-size:14px}
+.empty-icon{font-size:38px;display:block;margin-bottom:10px;opacity:.4}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;margin-right:6px;animation:blink 1.5s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.last-updated{font-size:12px;color:var(--muted);margin-bottom:24px;display:flex;align-items:center}
+footer{text-align:center;padding:24px;color:var(--muted);font-size:12px;border-top:1px solid var(--border)}
+@media(max-width:600px){main{padding:16px 14px 48px}.page-title{font-size:24px}header{padding:0 14px}.brand{font-size:15px}}
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/announcements">
+    <img src="https://i.imgur.com/esh-Lq2dqye.png" alt="Logo" style="width:32px;height:32px;object-fit:contain;border-radius:6px" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+    <div class="brand-icon" style="display:none">🏠</div>
+    Residence Portal
+  </a>
+  <a class="login-btn" href="/">Resident Login →</a>
+</header>
+<main>
+  <div class="page-title">📢 Announcements</div>
+  <div class="page-sub">Live updates from building management. No login required.</div>
+  <div class="last-updated"><span class="live-dot"></span><span id="last-updated">Loading…</span></div>
+  <div id="urgent-section"></div>
+  <div id="notices-section"></div>
+  <div class="st" style="margin-top:28px">News & Updates</div>
+  <div id="news-section"><div class="empty"><span class="empty-icon">📄</span>Loading…</div></div>
+</main>
+<footer>Residence Portal · Public Announcements Board · <a href="/" style="color:var(--amber)">Resident Login</a></footer>
+<script>
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+const catBadge=c=>{const m={Kitchen:'bk',Laundry:'bl',Maintenance:'bm',General:'bg'};return`<span class="badge ${m[c]||'bg'}">${esc(c)}</span>`}
+const fmt=d=>new Date(d+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'long',year:'numeric'})
+
+async function load(){
+  try{
+    const r=await fetch('/api/public/announcements');
+    const d=await r.json();
+    const now=new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+    document.getElementById('last-updated').textContent='Last updated: '+now+' · Auto-refreshes every 30 seconds';
+
+    // Urgent notices
+    const urgent=d.notices.filter(n=>n.urgent);
+    const urgEl=document.getElementById('urgent-section');
+    urgEl.innerHTML=urgent.map(n=>`
+      <div class="urgent-bar">
+        <span class="urgent-icon">⚠</span>
+        <div class="urgent-text">${esc(n.text)}</div>
+      </div>`).join('');
+
+    // Regular notices
+    const regular=d.notices.filter(n=>!n.urgent);
+    const notEl=document.getElementById('notices-section');
+    notEl.innerHTML=regular.map(n=>`
+      <div class="notice-card">
+        <span style="font-size:18px;flex-shrink:0">📢</span>
+        <div class="notice-text">${esc(n.text)}</div>
+      </div>`).join('');
+
+    // News
+    const newsEl=document.getElementById('news-section');
+    newsEl.innerHTML=d.news.length?d.news.map(n=>`
+      <div class="news-card">
+        <div class="news-meta">${catBadge(n.category)}<span class="news-date">${fmt(n.date)}</span></div>
+        <div class="news-title">${esc(n.title)}</div>
+        <div class="news-body">${esc(n.content)}</div>
+      </div>`).join(''):'<div class="empty"><span class="empty-icon">📄</span>No announcements yet.</div>';
+  }catch(e){
+    document.getElementById('last-updated').textContent='Could not load — retrying…';
+  }
+}
+
+load();
+setInterval(load, 30000); // auto-refresh every 30 seconds
+</script>
+</body>
+</html>)HTML";
+        res.html(page);
+    });
+
     // ── end routes ─────────────────────────────────────────────
     srv.setHtml(FRONTEND);
 
