@@ -853,139 +853,113 @@ public:
 // ═══════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════
-//  §11b  Gmail SMTP mailer  (TLS, port 587 STARTTLS)
+//  §11b  Resend email mailer  (HTTPS API, port 443)
 // ═══════════════════════════════════════════════════════════════════
 struct Mailer {
-    std::string gmailUser;   // e.g. you@gmail.com
-    std::string gmailPass;   // 16-char App Password
+    std::string apiKey;
+    std::string fromAddr;
     bool        enabled=false;
 
     void init(){
-        const char* u=std::getenv("GMAIL_USER");
-        const char* p=std::getenv("GMAIL_PASS");
-        if(u&&p&&strlen(u)>0&&strlen(p)>0){
-            gmailUser=u; gmailPass=p; enabled=true;
-            std::cout<<"  Email: Gmail SMTP enabled ("<<gmailUser<<")\n";
+        const char* k=std::getenv("RESEND_API_KEY");
+        const char* f=std::getenv("RESEND_FROM"); // optional custom from address
+        if(k&&strlen(k)>0){
+            apiKey=k;
+            fromAddr=f&&strlen(f)>0 ? std::string(f) : "Residence Portal <onboarding@resend.dev>";
+            enabled=true;
+            std::cout<<"  Email: Resend enabled (from: "<<fromAddr<<")\n";
         } else {
-            std::cout<<"  Email: disabled (set GMAIL_USER + GMAIL_PASS to enable)\n";
+            std::cout<<"  Email: disabled (set RESEND_API_KEY to enable)\n";
         }
     }
 
-    // Base64 encode
-    static std::string b64(const std::string& s){
-        static const char* t="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        std::string r; int v=0,bits=0;
-        for(unsigned char c:s){ v=(v<<8)|c; bits+=8;
-            while(bits>=6){ r+=t[(v>>(bits-6))&63]; bits-=6; } }
-        if(bits>0){ r+=t[(v<<(6-bits))&63]; }
-        while(r.size()%4) r+='=';
-        return r;
-    }
-
-    // Read until we have a complete SMTP response line
-    static std::string smtp_read(BIO* bio){
-        std::string result;
-        char c=0;
-        // Read char by char until we get a line not starting with digit-dash (multi-line)
-        for(int i=0;i<8192;i++){
-            int n=BIO_read(bio,&c,1);
-            if(n<=0) break;
-            result+=c;
-            // SMTP multi-line ends when we get "XYZ " (digit digit digit space)
-            if(result.size()>=4 && result[result.size()-1]=='\n'){
-                // Find last line
-                size_t pos=result.rfind('\n',result.size()-2);
-                std::string last=(pos==std::string::npos)?result:result.substr(pos+1);
-                if(last.size()>=4 && isdigit(last[0]) && isdigit(last[1]) && isdigit(last[2]) && last[3]==' ')
-                    break;
-            }
-        }
-        return result;
-    }
-
-    // Send one line + CRLF, read response, log it
-    static bool smtp_cmd(BIO* bio, const std::string& cmd, const std::string& expect){
-        std::string line=cmd+"\r\n";
-        BIO_write(bio,line.c_str(),(int)line.size());
-        std::string resp=smtp_read(bio);
-        bool ok=resp.find(expect)!=std::string::npos;
-        std::string disp=cmd.size()>60?cmd.substr(0,60)+"…":cmd;
-        std::cout<<"  SMTP >> "<<disp<<"\n  SMTP << "<<resp;
-        if(!ok) std::cerr<<"  SMTP expected '"<<expect<<"' but got: "<<resp;
-        return ok;
-    }
-
-    // Send email via Gmail SSL on port 465 (direct TLS, no STARTTLS)
+    // Send via Resend HTTPS API using OpenSSL BIO
     bool send(const std::string& toAddr, const std::string& toName,
-              const std::string& subject, const std::string& body){
+              const std::string& subject, const std::string& bodyText){
         if(!enabled||toAddr.empty()) return false;
         try{
+            // Build JSON payload
+            std::string payload=
+                "{\"from\":\""+fromAddr+"\","
+                "\"to\":[\""+toAddr+"\"],"
+                "\"subject\":\""+subject+"\","
+                "\"text\":\""+[&](){
+                    std::string s;
+                    for(char c:bodyText){
+                        if(c=='"') s+="\\\"";
+                        else if(c=='\\') s+="\\\\";
+                        else if(c=='\n') s+="\\n";
+                        else if(c=='\r') s+="\\r";
+                        else s+=c;
+                    }
+                    return s;
+                }()+"\"}";
+
+            // Build HTTP request
+            std::string httpReq=
+                "POST /emails HTTP/1.1\r\n"
+                "Host: api.resend.com\r\n"
+                "Authorization: Bearer "+apiKey+"\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: "+std::to_string(payload.size())+"\r\n"
+                "Connection: close\r\n"
+                "\r\n"+payload;
+
+            // Connect via SSL
             SSL_CTX* ctx=SSL_CTX_new(TLS_client_method());
-            if(!ctx){ std::cerr<<"  SMTP: SSL_CTX_new failed\n"; return false; }
+            if(!ctx){ std::cerr<<"  Resend: SSL_CTX_new failed\n"; return false; }
             SSL_CTX_set_verify(ctx,SSL_VERIFY_NONE,nullptr);
 
-            // Connect plain TCP first
-            BIO* bio=BIO_new_connect("smtp.gmail.com:465");
-            if(!bio){ SSL_CTX_free(ctx); std::cerr<<"  SMTP: BIO_new_connect failed\n"; return false; }
-            BIO_set_nbio(bio,0);
+            BIO* bio=BIO_new_ssl_connect(ctx);
+            if(!bio){ SSL_CTX_free(ctx); std::cerr<<"  Resend: BIO create failed\n"; return false; }
+
+            BIO_set_conn_hostname(bio,"api.resend.com:443");
+            SSL* ssl=nullptr;
+            BIO_get_ssl(bio,&ssl);
+            if(ssl) SSL_set_tlsext_host_name(ssl,"api.resend.com");
+
             if(BIO_do_connect(bio)<=0){
-                std::cerr<<"  SMTP: connect to smtp.gmail.com:465 failed\n";
+                std::cerr<<"  Resend: connect to api.resend.com:443 failed\n";
                 BIO_free_all(bio); SSL_CTX_free(ctx); return false;
             }
-            std::cout<<"  SMTP: TCP connected to smtp.gmail.com:465\n";
-
-            // Wrap immediately in SSL (port 465 = SSL from the start)
-            BIO* ssl_bio=BIO_new_ssl(ctx,1);
-            bio=BIO_push(ssl_bio,bio);
             if(BIO_do_handshake(bio)<=0){
-                std::cerr<<"  SMTP: TLS handshake failed\n";
-                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
-            }
-            std::cout<<"  SMTP: TLS handshake OK\n";
-
-            // Now read greeting
-            std::string greeting=smtp_read(bio);
-            std::cout<<"  SMTP << "<<greeting;
-            if(greeting.find("220")==std::string::npos){
-                std::cerr<<"  SMTP: bad greeting\n";
+                std::cerr<<"  Resend: TLS handshake failed\n";
                 BIO_free_all(bio); SSL_CTX_free(ctx); return false;
             }
 
-            smtp_cmd(bio,"EHLO residence.portal","250");
-            smtp_cmd(bio,"AUTH LOGIN","334");
-            smtp_cmd(bio,b64(gmailUser),"334");
-            if(!smtp_cmd(bio,b64(gmailPass),"235")){
-                std::cerr<<"  SMTP: AUTH failed — check GMAIL_USER and GMAIL_PASS\n";
-                BIO_free_all(bio); SSL_CTX_free(ctx); return false;
+            // Send request
+            BIO_write(bio,httpReq.c_str(),(int)httpReq.size());
+
+            // Read response
+            std::string resp; char buf[4096]={};
+            int n;
+            while((n=BIO_read(bio,buf,sizeof(buf)-1))>0){
+                buf[n]=0; resp+=buf;
             }
-            std::cout<<"  SMTP: authenticated OK\n";
-
-            smtp_cmd(bio,"MAIL FROM:<"+gmailUser+">","250");
-            smtp_cmd(bio,"RCPT TO:<"+toAddr+">","25");
-            smtp_cmd(bio,"DATA","354");
-
-            std::string msg=
-                "From: Residence Portal <"+gmailUser+">\r\n"
-                "To: "+toName+" <"+toAddr+">\r\n"
-                "Subject: "+subject+"\r\n"
-                "MIME-Version: 1.0\r\n"
-                "Content-Type: text/plain; charset=UTF-8\r\n"
-                "\r\n"+body+"\r\n.\r\n";
-            BIO_write(bio,msg.c_str(),(int)msg.size());
-            std::string dataResp=smtp_read(bio);
-            std::cout<<"  SMTP << "<<dataResp;
-            smtp_cmd(bio,"QUIT","221");
             BIO_free_all(bio); SSL_CTX_free(ctx);
-            std::cout<<"  Email sent OK to "<<toAddr<<"\n";
-            return true;
+
+            // Check HTTP status
+            bool ok=resp.find("200 OK")!=std::string::npos||resp.find("201")!=std::string::npos;
+            if(ok){
+                std::cout<<"  Resend: email sent OK to "<<toAddr<<"\n";
+            } else {
+                // Print first line of response for debugging
+                auto nl=resp.find('\n');
+                std::cerr<<"  Resend: send failed — "<<resp.substr(0,nl==std::string::npos?200:nl)<<"\n";
+                // Print body too
+                auto body_start=resp.find("\r\n\r\n");
+                if(body_start!=std::string::npos)
+                    std::cerr<<"  Resend body: "<<resp.substr(body_start+4,300)<<"\n";
+            }
+            return ok;
         } catch(const std::exception& e){
-            std::cerr<<"  Email send exception: "<<e.what()<<"\n"; return false;
+            std::cerr<<"  Resend exception: "<<e.what()<<"\n"; return false;
         } catch(...){
-            std::cerr<<"  Email send failed (unknown error)\n"; return false;
+            std::cerr<<"  Resend: unknown error\n"; return false;
         }
     }
 
-    // Send async (fire-and-forget thread)
+    // Send async (fire-and-forget)
     void sendAsync(const std::string& toAddr, const std::string& toName,
                    const std::string& subject, const std::string& body){
         if(!enabled||toAddr.empty()) return;
